@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 
 	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
@@ -96,11 +98,25 @@ type CreateBuilderFlags struct {
 	NoPull          bool
 }
 
+func writePProf(name string) {
+	f, err := os.Create(name)
+	if err != nil {
+		log.Fatal("could not create memory profile: ", err)
+	}
+	runtime.GC() // get up-to-date statistics
+	if err := pprof.WriteHeapProfile(f); err != nil {
+		log.Fatal("could not write memory profile: ", err)
+	}
+	f.Close()
+}
+
 func (f *BuilderFactory) BuilderConfigFromFlags(flags CreateBuilderFlags) (BuilderConfig, error) {
+	writePProf("/tmp/pack.cfgfrom.1.mem.prof")
 	baseImage, err := f.baseImageName(flags.StackID, flags.RepoName)
 	if err != nil {
 		return BuilderConfig{}, err
 	}
+	writePProf("/tmp/pack.cfgfrom.2.mem.prof")
 	if !flags.NoPull && !flags.Publish {
 		f.Log.Println("Pulling builder base image ", baseImage)
 		err := f.Docker.PullImage(baseImage)
@@ -108,10 +124,12 @@ func (f *BuilderFactory) BuilderConfigFromFlags(flags CreateBuilderFlags) (Build
 			return BuilderConfig{}, fmt.Errorf(`failed to pull stack build image "%s": %s`, baseImage, err)
 		}
 	}
+	writePProf("/tmp/pack.cfgfrom.3.mem.prof")
 
 	builderConfig := BuilderConfig{RepoName: flags.RepoName}
 	builderConfig.BuilderDir = filepath.Dir(flags.BuilderTomlPath)
 	builderConfig.BaseImage, err = f.Images.ReadImage(baseImage, !flags.Publish)
+	writePProf("/tmp/pack.cfgfrom.4.mem.prof")
 	if err != nil {
 		return BuilderConfig{}, fmt.Errorf(`failed to read base image "%s": %s`, baseImage, err)
 	}
@@ -119,6 +137,7 @@ func (f *BuilderFactory) BuilderConfigFromFlags(flags CreateBuilderFlags) (Build
 		return BuilderConfig{}, fmt.Errorf(`base image "%s" was not found`, baseImage)
 	}
 	builderConfig.Repo, err = f.Images.RepoStore(flags.RepoName, !flags.Publish)
+	writePProf("/tmp/pack.cfgfrom.5.mem.prof")
 	if err != nil {
 		return BuilderConfig{}, fmt.Errorf(`failed to create repository store for builder image "%s": %s`, flags.RepoName, err)
 	}
@@ -129,14 +148,20 @@ func (f *BuilderFactory) BuilderConfigFromFlags(flags CreateBuilderFlags) (Build
 		return BuilderConfig{}, fmt.Errorf(`failed to decode builder config from file "%s": %s`, flags.BuilderTomlPath, err)
 	}
 	builderConfig.Groups = builderTOML.Groups
+	writePProf("/tmp/pack.cfgfrom.6.mem.prof")
 
-	for _, b := range builderTOML.Buildpacks {
+	for i, b := range builderTOML.Buildpacks {
 		bp, err := f.resolveBuildpackURI(builderConfig.BuilderDir, b)
 		if err != nil {
 			return BuilderConfig{}, err
 		}
 		builderConfig.Buildpacks = append(builderConfig.Buildpacks, bp)
+		writePProf(fmt.Sprintf("/tmp/pack.cfgfrom.%d.mem.prof", i+7))
 	}
+
+	writePProf("/tmp/pack.cfgfrom.last.mem.prof")
+	os.Exit(2)
+
 	return builderConfig, nil
 }
 
@@ -275,6 +300,16 @@ func (f *BuilderFactory) Create(config BuilderConfig) error {
 	if err := config.Repo.Write(builderImage); err != nil {
 		return err
 	}
+
+	f2, err := os.Create("/tmp/pack.create.mem.prof")
+	if err != nil {
+		log.Fatal("could not create memory profile: ", err)
+	}
+	runtime.GC() // get up-to-date statistics
+	if err := pprof.WriteHeapProfile(f2); err != nil {
+		log.Fatal("could not write memory profile: ", err)
+	}
+	f2.Close()
 
 	f.Log.Println("Successfully created builder image:", config.RepoName)
 	f.Log.Println("")

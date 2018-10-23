@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 	"strings"
 	"syscall"
 
@@ -38,6 +40,16 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+
+	f, err := os.Create("/tmp/pack.mem.prof")
+	if err != nil {
+		log.Fatal("could not create memory profile: ", err)
+	}
+	runtime.GC() // get up-to-date statistics
+	if err := pprof.WriteHeapProfile(f); err != nil {
+		log.Fatal("could not write memory profile: ", err)
+	}
+	f.Close()
 }
 
 func buildCommand() *cobra.Command {
