@@ -1,12 +1,11 @@
-sudo: required
 language: go
-services:
-- docker
 go:
 - 1.11.x
 env:
   global:
   - GO111MODULE=on
+  - DOCKER_TLS_VERIFY=1
+  - DOCKER_HOST=tcp://35.193.22.81:2376
 cache:
   directories:
   - $GOPATH/pkg/mod
