@@ -3,7 +3,7 @@ go:
 - 1.11.x
 os:
 - linux
-- osx
+# - osx
 env:
   global:
   - GO111MODULE=on
@@ -12,12 +12,13 @@ env:
 cache:
   directories:
   - $GOPATH/pkg/mod
-install: true
-script:
+before_install:
 - mkdir -p ~/.docker
 - openssl aes-256-cbc -K $encrypted_7e4b2b66a1e9_key -iv $encrypted_7e4b2b66a1e9_iv -in .travis/ca.pem.enc -out ~/.docker/ca.pem -d
 - openssl aes-256-cbc -K $encrypted_7e4b2b66a1e9_key -iv $encrypted_7e4b2b66a1e9_iv -in .travis/key.pem.enc -out ~/.docker/key.pem -d
 - openssl aes-256-cbc -K $encrypted_7e4b2b66a1e9_key -iv $encrypted_7e4b2b66a1e9_iv -in .travis/cert.pem.enc -out ~/.docker/cert.pem -d
+install: true
+script:
 - export DOCKER_CERT_PATH=~/.docker/
 - 'export PACK_VERSION="$TRAVIS_TAG (git sha: $(git log -1 --pretty=%H))"'
 - go build -ldflags "-X 'main.Version=$PACK_VERSION'" -o artifacts/pack-$TRAVIS_BUILD_NUMBER-linux ./cmd/pack
