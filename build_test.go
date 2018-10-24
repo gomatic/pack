@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -37,9 +38,9 @@ import (
 func TestBuild(t *testing.T) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	assertNil(t, exec.Command("docker", "pull", "registry:2").Run())
-	assertNil(t, exec.Command("docker", "pull", "packs/samples").Run())
-	assertNil(t, exec.Command("docker", "pull", "packs/run").Run())
+	// assertNil(t, exec.Command("docker", "pull", "registry:2").Run())
+	// assertNil(t, exec.Command("docker", "pull", "packs/samples").Run())
+	// assertNil(t, exec.Command("docker", "pull", "packs/run").Run())
 
 	spec.Run(t, "build", testBuild, spec.Parallel(), spec.Report(report.Terminal{}))
 }
@@ -412,9 +413,9 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 					subject.RepoName = "localhost:" + registryPort + "/" + subject.RepoName
 					subject.Publish = true
 
-					assertNil(t, exec.Command("docker", "tag", oldRepoName, subject.RepoName).Run())
-					assertNil(t, exec.Command("docker", "push", subject.RepoName).Run())
-					assertNil(t, exec.Command("docker", "rmi", oldRepoName, subject.RepoName).Run())
+					run(t, exec.Command("docker", "tag", oldRepoName, subject.RepoName))
+					run(t, exec.Command("docker", "push", subject.RepoName))
+					run(t, exec.Command("docker", "rmi", oldRepoName, subject.RepoName))
 				})
 				it.After(func() {
 					assertNil(t, exec.Command("docker", "kill", registryContainerName).Run())
@@ -766,25 +767,69 @@ func contains(arr []string, val string) bool {
 	return false
 }
 
+func proxyDockerHostPort(port string) (string, error) {
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return "", err
+	}
+	go func() {
+		// TODO exit somehow.
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				cmd := exec.Command("docker", "run", "-i", "--network=host", "alpine/socat", "-", "TCP:localhost:"+port)
+				cmd.Stdin = conn
+				cmd.Stdout = conn
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					log.Println(err)
+				}
+			}(conn)
+		}
+	}()
+	addr := ln.Addr().String()
+	i := strings.LastIndex(addr, ":")
+	if i == -1 {
+		return "", fmt.Errorf("finding port: ':' not found in '%s'", addr)
+	}
+	return addr[(i + 1):], nil
+}
+
 func runRegistry(t *testing.T) (string, string) {
 	t.Helper()
 	name := "test-registry-" + randString(10)
 	assertNil(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", name, "registry:2").Run())
 	port, err := exec.Command("docker", "inspect", name, "-f", `{{index (index (index .NetworkSettings.Ports "5000/tcp") 0) "HostPort"}}`).Output()
 	assertNil(t, err)
+	if os.Getenv("DOCKER_HOST") != "" {
+		addr, err := proxyDockerHostPort(string(port))
+		assertNil(t, err)
+		return name, addr
+	}
 	return name, strings.TrimSpace(string(port))
 }
 
 func httpGet(t *testing.T, url string) string {
-	resp, err := http.Get(url)
-	assertNil(t, err)
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		t.Fatalf("HTTP Status was bad: %s => %d", url, resp.StatusCode)
+	if os.Getenv("DOCKER_HOST") == "" {
+		resp, err := http.Get(url)
+		assertNil(t, err)
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			t.Fatalf("HTTP Status was bad: %s => %d", url, resp.StatusCode)
+		}
+		b, err := ioutil.ReadAll(resp.Body)
+		assertNil(t, err)
+		return string(b)
+	} else {
+		b, err := exec.Command("docker", "run", "--entrypoint=''", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url).Output()
+		assertNil(t, err)
+		return string(b)
 	}
-	b, err := ioutil.ReadAll(resp.Body)
-	assertNil(t, err)
-	return string(b)
 }
 
 func copyWorkspaceToDocker(t *testing.T, srcPath, destVolume string) {
@@ -803,4 +848,15 @@ func readFromDocker(t *testing.T, volume, path string) string {
 	cmd.Stdout = &buf
 	assertNil(t, cmd.Run())
 	return buf.String()
+}
+
+func run(t *testing.T, cmd *exec.Cmd) string {
+	t.Helper()
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to execute command: %v, %s, %s", cmd.Args, err, output)
+	}
+
+	return string(output)
 }
