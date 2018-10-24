@@ -373,7 +373,7 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 			when("publish", func() {
 				var registryContainerName, registryPort string
 				it.Before(func() {
-					registryContainerName, registryPort = runRegistry(t)
+					registryContainerName, _, registryPort = runRegistry(t)
 					subject.RepoName = "localhost:" + registryPort + "/" + subject.RepoName
 					subject.Publish = true
 				})
@@ -406,16 +406,18 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 			})
 
 			when("publish", func() {
-				var registryContainerName, registryPort string
+				var registryContainerName, localRegistryPort, remoteRegistryPort string
 				it.Before(func() {
 					oldRepoName := subject.RepoName
-					registryContainerName, registryPort = runRegistry(t)
-					subject.RepoName = "localhost:" + registryPort + "/" + subject.RepoName
+					registryContainerName, localRegistryPort, remoteRegistryPort = runRegistry(t)
+
+					remoteRepoName := "localhost:" + remoteRegistryPort + "/" + oldRepoName
+					subject.RepoName = "localhost:" + localRegistryPort + "/" + oldRepoName
 					subject.Publish = true
 
-					run(t, exec.Command("docker", "tag", oldRepoName, subject.RepoName))
-					run(t, exec.Command("docker", "push", subject.RepoName))
-					run(t, exec.Command("docker", "rmi", oldRepoName, subject.RepoName))
+					run(t, exec.Command("docker", "tag", oldRepoName, remoteRepoName))
+					run(t, exec.Command("docker", "push", remoteRepoName))
+					run(t, exec.Command("docker", "rmi", oldRepoName, remoteRepoName))
 				})
 				it.After(func() {
 					assertNil(t, exec.Command("docker", "kill", registryContainerName).Run())
@@ -542,11 +544,13 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 
 		when("no previous image exists", func() {
 			when("publish", func() {
-				var oldRepoName, registryContainerName, registryPort string
+				var oldRepoName, registryContainerName, localRegistryPort, remoteRegistryPort string
 				it.Before(func() {
 					oldRepoName = subject.RepoName
-					registryContainerName, registryPort = runRegistry(t)
-					subject.RepoName = "localhost:" + registryPort + "/" + subject.RepoName
+					registryContainerName, localRegistryPort, remoteRegistryPort = runRegistry(t)
+
+					// remoteRepoName := "localhost:" + remoteRegistryPort + "/" + oldRepoName
+					subject.RepoName = "localhost:" + localRegistryPort + "/" + oldRepoName
 					subject.Publish = true
 				})
 				it.After(func() {
@@ -554,7 +558,7 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 				})
 				it("creates the image on the registry", func() {
 					assertNil(t, subject.Export(group))
-					images := httpGet(t, "http://localhost:"+registryPort+"/v2/_catalog")
+					images := httpGet(t, "http://localhost:"+remoteRegistryPort+"/v2/_catalog")
 					assertContains(t, images, oldRepoName)
 				})
 				it("puts the files on the image", func() {
@@ -800,18 +804,20 @@ func proxyDockerHostPort(port string) (string, error) {
 	return addr[(i + 1):], nil
 }
 
-func runRegistry(t *testing.T) (string, string) {
+func runRegistry(t *testing.T) (name, localPort, remotePort string) {
 	t.Helper()
-	name := "test-registry-" + randString(10)
+	name = "test-registry-" + randString(10)
 	assertNil(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", name, "registry:2").Run())
 	port, err := exec.Command("docker", "inspect", name, "-f", `{{index (index (index .NetworkSettings.Ports "5000/tcp") 0) "HostPort"}}`).Output()
 	assertNil(t, err)
+	trimmedPort := strings.TrimSpace(string(port))
 	if os.Getenv("DOCKER_HOST") != "" {
-		addr, err := proxyDockerHostPort(string(port))
+		addr, err := proxyDockerHostPort(trimmedPort)
 		assertNil(t, err)
-		return name, addr
+		return name, addr, trimmedPort
 	}
-	return name, strings.TrimSpace(string(port))
+
+	return name, trimmedPort, trimmedPort
 }
 
 func httpGet(t *testing.T, url string) string {
