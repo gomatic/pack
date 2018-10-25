@@ -12,12 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sclevine/spec"
+	"github.com/sclevine/spec/report"
+
 	"github.com/buildpack/pack/docker"
 	"github.com/buildpack/pack/fs"
 	"github.com/buildpack/pack/image"
-	"github.com/google/go-cmp/cmp"
-	"github.com/sclevine/spec"
-	"github.com/sclevine/spec/report"
+	h "github.com/buildpack/pack/testhelpers"
 )
 
 func TestLocal(t *testing.T) {
@@ -32,14 +33,14 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 
 	it.Before(func() {
 		docker, err := docker.New()
-		assertNil(t, err)
+		h.AssertNil(t, err)
 		factory = image.Factory{
 			Docker: docker,
 			Log:    log.New(&buf, "", log.LstdFlags),
 			Stdout: &buf,
 			FS:     &fs.FS{},
 		}
-		repoName = "pack-image-test-" + randString(10)
+		repoName = "pack-image-test-" + h.RandString(10)
 	})
 	it.After(func() {
 		exec.Command("docker", "rmi", "-f", repoName).Run()
@@ -54,34 +55,34 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 					FROM scratch
 					LABEL mykey=myvalue other=data
 				`)
-				assertNil(t, cmd.Run())
+				h.Run(t, cmd)
 			})
 			it("returns the label value", func() {
 				img, err := factory.NewLocal(repoName, false)
-				assertNil(t, err)
+				h.AssertNil(t, err)
 
 				label, err := img.Label("mykey")
-				assertNil(t, err)
-				assertEq(t, label, "myvalue")
+				h.AssertNil(t, err)
+				h.AssertEq(t, label, "myvalue")
 			})
 
 			it("returns an empty string for a missing label", func() {
 				img, err := factory.NewLocal(repoName, false)
-				assertNil(t, err)
+				h.AssertNil(t, err)
 
 				label, err := img.Label("missing-label")
-				assertNil(t, err)
-				assertEq(t, label, "")
+				h.AssertNil(t, err)
+				h.AssertEq(t, label, "")
 			})
 		})
 
 		when("image NOT exists", func() {
 			it("returns an error", func() {
 				img, err := factory.NewLocal(repoName, false)
-				assertNil(t, err)
+				h.AssertNil(t, err)
 
 				_, err = img.Label("mykey")
-				assertError(t, err, fmt.Sprintf("failed to get label, image '%s' does not exist", repoName))
+				h.AssertError(t, err, fmt.Sprintf("failed to get label, image '%s' does not exist", repoName))
 			})
 		})
 	})
@@ -89,7 +90,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 	when("#Name", func() {
 		it("always returns the original name", func() {
 			img, _ := factory.NewLocal(repoName, false)
-			assertEq(t, img.Name(), repoName)
+			h.AssertEq(t, img.Name(), repoName)
 		})
 	})
 
@@ -100,7 +101,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				var buf bytes.Buffer
 				cmd := exec.Command("docker", "pull", "busybox:1.29")
 				cmd.Stdout = &buf
-				assertNil(t, cmd.Run())
+				h.Run(t, cmd)
 				regex := regexp.MustCompile(`Digest: (sha256:\w*)`)
 				matches := regex.FindStringSubmatch(buf.String())
 				if len(matches) < 2 {
@@ -111,14 +112,14 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 
 			it.After(func() {
 				cmd := exec.Command("docker", "rmi", "busybox:1.29")
-				assertNil(t, cmd.Run())
+				h.Run(t, cmd)
 			})
 
 			it("returns the image digest", func() {
 				img, _ := factory.NewLocal("busybox:1.29", true)
 				digest, err := img.Digest()
-				assertNil(t, err)
-				assertEq(t, digest, expectedDigest)
+				h.AssertNil(t, err)
+				h.AssertEq(t, digest, expectedDigest)
 			})
 		})
 
@@ -129,19 +130,19 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 					FROM scratch
 					LABEL key=val
 				`)
-				assertNil(t, cmd.Run())
+				h.Run(t, cmd)
 			})
 
 			it.After(func() {
 				cmd := exec.Command("docker", "rmi", repoName)
-				assertNil(t, cmd.Run())
+				h.Run(t, cmd)
 			})
 
 			it("returns an empty string", func() {
 				img, _ := factory.NewLocal(repoName, false)
 				digest, err := img.Digest()
-				assertNil(t, err)
-				assertEq(t, digest, "")
+				h.AssertNil(t, err)
+				h.AssertEq(t, digest, "")
 			})
 		})
 	})
@@ -154,24 +155,24 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 					FROM scratch
 					LABEL mykey=myvalue other=data
 				`)
-				assertNil(t, cmd.Run())
+				h.Run(t, cmd)
 			})
 			it("sets label on img object", func() {
 				img, _ := factory.NewLocal(repoName, false)
-				assertNil(t, img.SetLabel("mykey", "new-val"))
+				h.AssertNil(t, img.SetLabel("mykey", "new-val"))
 				label, err := img.Label("mykey")
-				assertNil(t, err)
-				assertEq(t, label, "new-val")
+				h.AssertNil(t, err)
+				h.AssertEq(t, label, "new-val")
 			})
 
 			it("saves label to docker daemon", func() {
 				img, _ := factory.NewLocal(repoName, false)
-				assertNil(t, img.SetLabel("mykey", "new-val"))
+				h.AssertNil(t, img.SetLabel("mykey", "new-val"))
 				_, err := img.Save()
-				assertNil(t, err)
+				h.AssertNil(t, err)
 
-				label, err := exec.Command("docker", "inspect", repoName, "-f", `{{.Config.Labels.mykey}}`).Output()
-				assertEq(t, strings.TrimSpace(string(label)), "new-val")
+				label := h.Run(t, exec.Command("docker", "inspect", repoName, "-f", `{{.Config.Labels.mykey}}`))
+				h.AssertEq(t, strings.TrimSpace(label), "new-val")
 			})
 		})
 	})
@@ -180,14 +181,14 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		when("image exists", func() {
 			var oldBase, oldTopLayer, newBase string
 			it.Before(func() {
-				oldBase = "pack-oldbase-test-" + randString(10)
+				oldBase = "pack-oldbase-test-" + h.RandString(10)
 				oldTopLayer = createImageOnLocal(t, oldBase, `
 					FROM busybox
 					RUN echo old-base > base.txt
 					RUN echo text-old-base > otherfile.txt
 				`)
 
-				newBase = "pack-newbase-test-" + randString(10)
+				newBase = "pack-newbase-test-" + h.RandString(10)
 				createImageOnLocal(t, newBase, `
 					FROM busybox
 					RUN echo new-base > base.txt
@@ -206,24 +207,22 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 
 			it("switches the base", func() {
 				// Before
-				txt, err := exec.Command("docker", "run", repoName, "cat", "base.txt").Output()
-				assertNil(t, err)
-				assertEq(t, string(txt), "old-base\n")
+				txt := h.Run(t, exec.Command("docker", "run", repoName, "cat", "base.txt"))
+				h.AssertEq(t, txt, "old-base\n")
 
 				// Run rebase
 				img, err := factory.NewLocal(repoName, false)
-				assertNil(t, err)
+				h.AssertNil(t, err)
 				newBaseImg, err := factory.NewLocal(newBase, false)
-				assertNil(t, err)
+				h.AssertNil(t, err)
 				err = img.Rebase(oldTopLayer, newBaseImg)
-				assertNil(t, err)
+				h.AssertNil(t, err)
 				_, err = img.Save()
-				assertNil(t, err)
+				h.AssertNil(t, err)
 
 				// After
-				txt, err = exec.Command("docker", "run", repoName, "cat", "base.txt").Output()
-				assertNil(t, err)
-				assertEq(t, string(txt), "new-base\n")
+				txt = h.Run(t, exec.Command("docker", "run", repoName, "cat", "base.txt"))
+				h.AssertEq(t, txt, "new-base\n")
 			})
 		})
 	})
@@ -238,12 +237,12 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				`)
 
 				img, err := factory.NewLocal(repoName, false)
-				assertNil(t, err)
+				h.AssertNil(t, err)
 
 				actualTopLayer, err := img.TopLayer()
-				assertNil(t, err)
+				h.AssertNil(t, err)
 
-				assertEq(t, actualTopLayer, expectedTopLayer)
+				h.AssertEq(t, actualTopLayer, expectedTopLayer)
 			})
 		})
 	})
@@ -257,52 +256,19 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				`)
 
 				img, err := factory.NewLocal(repoName, false)
-				assertNil(t, err)
+				h.AssertNil(t, err)
 
 				err = img.SetLabel("mykey", "newValue")
-				assertNil(t, err)
+				h.AssertNil(t, err)
 
 				imgDigest, err := img.Save()
-				assertNil(t, err)
+				h.AssertNil(t, err)
 
-				label, err := exec.Command("docker", "inspect", imgDigest, "-f", `{{.Config.Labels.mykey}}`).Output()
-				assertEq(t, strings.TrimSpace(string(label)), "newValue")
+				label := h.Run(t, exec.Command("docker", "inspect", imgDigest, "-f", `{{.Config.Labels.mykey}}`))
+				h.AssertEq(t, strings.TrimSpace(label), "newValue")
 			})
 		})
 	})
-}
-
-func assertNil(t *testing.T, actual interface{}) {
-	t.Helper()
-	if actual != nil {
-		t.Fatalf("Expected nil: %s", actual)
-	}
-}
-
-func randString(n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = 'a' + byte(rand.Intn(26))
-	}
-	return string(b)
-}
-
-// Assert deep equality (and provide useful difference as a test failure)
-func assertEq(t *testing.T, actual, expected interface{}) {
-	t.Helper()
-	if diff := cmp.Diff(actual, expected); diff != "" {
-		t.Fatal(diff)
-	}
-}
-
-func assertError(t *testing.T, actual error, expected string) {
-	t.Helper()
-	if actual == nil {
-		t.Fatalf("Expected an error but got nil")
-	}
-	if actual.Error() != expected {
-		t.Fatalf(`Expected error to equal "%s", got "%s"`, expected, actual.Error())
-	}
 }
 
 func createImageOnLocal(t *testing.T, repoName, dockerFile string) string {
@@ -310,12 +276,11 @@ func createImageOnLocal(t *testing.T, repoName, dockerFile string) string {
 
 	cmd := exec.Command("docker", "build", "-t", repoName+":latest", "-")
 	cmd.Stdin = strings.NewReader(dockerFile)
-	run(t, cmd)
+	h.Run(t, cmd)
 
-	topLayerJSON, err := exec.Command("docker", "inspect", repoName, "-f", `{{json .RootFS.Layers}}`).Output()
-	assertNil(t, err)
+	topLayerJSON := h.Run(t, exec.Command("docker", "inspect", repoName, "-f", `{{json .RootFS.Layers}}`))
 	var layers []string
-	assertNil(t, json.Unmarshal(topLayerJSON, &layers))
+	h.AssertNil(t, json.Unmarshal([]byte(topLayerJSON), &layers))
 	topLayer := layers[len(layers)-1]
 
 	return topLayer
