@@ -14,10 +14,17 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/buildpack/lifecycle"
+	"github.com/buildpack/pack"
+	"github.com/buildpack/pack/config"
+	"github.com/buildpack/pack/docker"
+	"github.com/buildpack/pack/fs"
+	"github.com/buildpack/pack/image"
+	"github.com/buildpack/pack/mocks"
 	dockertypes "github.com/docker/docker/api/types"
 	dockercontainer "github.com/docker/docker/api/types/container"
 	"github.com/golang/mock/gomock"
@@ -26,21 +33,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/sclevine/spec"
 	"github.com/sclevine/spec/report"
-
-	"github.com/buildpack/pack"
-	"github.com/buildpack/pack/config"
-	"github.com/buildpack/pack/docker"
-	"github.com/buildpack/pack/fs"
-	"github.com/buildpack/pack/image"
-	"github.com/buildpack/pack/mocks"
 )
 
 func TestBuild(t *testing.T) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	// assertNil(t, exec.Command("docker", "pull", "registry:2").Run())
-	// assertNil(t, exec.Command("docker", "pull", "packs/samples").Run())
-	// assertNil(t, exec.Command("docker", "pull", "packs/run").Run())
+	assertNil(t, exec.Command("docker", "pull", "registry:2").Run())
+	assertNil(t, exec.Command("docker", "pull", "packs/samples").Run())
+	assertNil(t, exec.Command("docker", "pull", "packs/run").Run())
+	defer func() {
+		if runRegistryName != "" {
+			assertNil(t, exec.Command("docker", "kill", runRegistryName).Run())
+		}
+	}()
 
 	spec.Run(t, "build", testBuild, spec.Parallel(), spec.Report(report.Terminal{}))
 }
@@ -371,13 +376,12 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 		})
 		when("no previous image exists", func() {
 			when("publish", func() {
-				var registryContainerName, registryPort string
+				var registryPort string
 				it.Before(func() {
-					registryContainerName, _, registryPort = runRegistry(t)
+					_, registryPort = runRegistry(t)
 					subject.RepoName = "localhost:" + registryPort + "/" + subject.RepoName
 					subject.Publish = true
 				})
-				it.After(func() { assertNil(t, exec.Command("docker", "kill", registryContainerName).Run()) })
 
 				it("informs the user", func() {
 					err := subject.Analyze()
@@ -406,21 +410,17 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 			})
 
 			when("publish", func() {
-				var registryContainerName, localRegistryPort, remoteRegistryPort string
+				var registryPort string
 				it.Before(func() {
 					oldRepoName := subject.RepoName
-					registryContainerName, localRegistryPort, remoteRegistryPort = runRegistry(t)
+					_, registryPort = runRegistry(t)
 
-					remoteRepoName := "localhost:" + remoteRegistryPort + "/" + oldRepoName
-					subject.RepoName = "localhost:" + localRegistryPort + "/" + oldRepoName
+					subject.RepoName = "localhost:" + registryPort + "/" + oldRepoName
 					subject.Publish = true
 
-					run(t, exec.Command("docker", "tag", oldRepoName, remoteRepoName))
-					run(t, exec.Command("docker", "push", remoteRepoName))
-					run(t, exec.Command("docker", "rmi", oldRepoName, remoteRepoName))
-				})
-				it.After(func() {
-					assertNil(t, exec.Command("docker", "kill", registryContainerName).Run())
+					run(t, exec.Command("docker", "tag", oldRepoName, subject.RepoName))
+					run(t, exec.Command("docker", "push", subject.RepoName))
+					run(t, exec.Command("docker", "rmi", oldRepoName, subject.RepoName))
 				})
 
 				it("tells the user nothing", func() {
@@ -544,43 +544,36 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 
 		when("no previous image exists", func() {
 			when("publish", func() {
-				var oldRepoName, registryContainerName, localRegistryPort, remoteRegistryPort string
+				var oldRepoName, registryPort string
 				it.Before(func() {
 					oldRepoName = subject.RepoName
-					registryContainerName, localRegistryPort, remoteRegistryPort = runRegistry(t)
+					_, registryPort = runRegistry(t)
 
-					// remoteRepoName := "localhost:" + remoteRegistryPort + "/" + oldRepoName
-					subject.RepoName = "localhost:" + localRegistryPort + "/" + oldRepoName
+					subject.RepoName = "localhost:" + registryPort + "/" + oldRepoName
 					subject.Publish = true
-				})
-				it.After(func() {
-					assertNil(t, exec.Command("docker", "kill", registryContainerName).Run())
 				})
 				it("creates the image on the registry", func() {
 					assertNil(t, subject.Export(group))
-					images := httpGet(t, "http://localhost:"+remoteRegistryPort+"/v2/_catalog")
+					images := httpGet(t, "http://localhost:"+registryPort+"/v2/_catalog")
 					assertContains(t, images, oldRepoName)
 				})
 				it("puts the files on the image", func() {
 					assertNil(t, subject.Export(group))
 
-					assertNil(t, exec.Command("docker", "pull", subject.RepoName).Run())
-					txt, err := exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/app/file.txt").Output()
-					assertNil(t, err)
-					assertEq(t, string(txt), "some text")
+					run(t, exec.Command("docker", "pull", subject.RepoName))
+					txt := run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/app/file.txt"))
+					assertEq(t, txt, "some text")
 
-					txt, err = exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/io.buildpacks.samples.nodejs/mylayer/file.txt").Output()
-					assertNil(t, err)
-					assertEq(t, string(txt), "content")
+					txt = run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/io.buildpacks.samples.nodejs/mylayer/file.txt"))
+					assertEq(t, txt, "content")
 				})
 				it("sets the metadata on the image", func() {
 					assertNil(t, subject.Export(group))
 
-					assertNil(t, exec.Command("docker", "pull", subject.RepoName).Run())
+					run(t, exec.Command("docker", "pull", subject.RepoName))
 					var metadata lifecycle.AppImageMetadata
-					metadataJSON, err := exec.Command("docker", "inspect", subject.RepoName, "--format", `{{index .Config.Labels "io.buildpacks.lifecycle.metadata"}}`).Output()
-					assertNil(t, err)
-					assertNil(t, json.Unmarshal(metadataJSON, &metadata))
+					metadataJSON := run(t, exec.Command("docker", "inspect", subject.RepoName, "--format", `{{index .Config.Labels "io.buildpacks.lifecycle.metadata"}}`))
+					assertNil(t, json.Unmarshal([]byte(metadataJSON), &metadata))
 
 					assertContains(t, metadata.App.SHA, "sha256:")
 					assertContains(t, metadata.Config.SHA, "sha256:")
@@ -595,28 +588,24 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 				it.Before(func() { subject.Publish = false })
 				it("creates the image on the daemon", func() {
 					assertNil(t, subject.Export(group))
-					images, err := exec.Command("docker", "images", "--format", "{{.Repository}}:{{.Tag}}").Output()
-					assertNil(t, err)
+					images := run(t, exec.Command("docker", "images", "--format", "{{.Repository}}:{{.Tag}}"))
 					assertContains(t, string(images), subject.RepoName)
 				})
 				it("puts the files on the image", func() {
 					assertNil(t, subject.Export(group))
 
-					txt, err := exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/app/file.txt").Output()
-					assertNil(t, err)
+					txt := run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/app/file.txt"))
 					assertEq(t, string(txt), "some text")
 
-					txt, err = exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/io.buildpacks.samples.nodejs/mylayer/file.txt").Output()
-					assertNil(t, err)
+					txt = run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/io.buildpacks.samples.nodejs/mylayer/file.txt"))
 					assertEq(t, string(txt), "content")
 				})
 				it("sets the metadata on the image", func() {
 					assertNil(t, subject.Export(group))
 
 					var metadata lifecycle.AppImageMetadata
-					metadataJSON, err := exec.Command("docker", "inspect", subject.RepoName, "--format", `{{index .Config.Labels "io.buildpacks.lifecycle.metadata"}}`).Output()
-					assertNil(t, err)
-					assertNil(t, json.Unmarshal(metadataJSON, &metadata))
+					metadataJSON := run(t, exec.Command("docker", "inspect", subject.RepoName, "--format", `{{index .Config.Labels "io.buildpacks.lifecycle.metadata"}}`))
+					assertNil(t, json.Unmarshal([]byte(metadataJSON), &metadata))
 
 					assertEq(t, metadata.RunImage.Name, "packs/run")
 					assertContains(t, metadata.App.SHA, "sha256:")
@@ -666,6 +655,7 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 					cmd.Stdin = strings.NewReader(`
 						FROM packs/samples
 						ENV PACK_USER_ID 1234
+						ENV PACK_GROUP_ID ''
 						ENV PACK_USER_GID 5678
 					`)
 					assertNil(t, cmd.Run())
@@ -786,7 +776,7 @@ func proxyDockerHostPort(port string) (string, error) {
 			}
 			go func(conn net.Conn) {
 				defer conn.Close()
-				cmd := exec.Command("docker", "run", "-i", "--network=host", "alpine/socat", "-", "TCP:localhost:"+port)
+				cmd := exec.Command("docker", "run", "-i", "--log-driver=none", "-a", "stdin", "-a", "stdout", "-a", "stderr", "--network=host", "alpine/socat", "-", "TCP:localhost:"+port)
 				cmd.Stdin = conn
 				cmd.Stdout = conn
 				cmd.Stderr = os.Stderr
@@ -804,23 +794,29 @@ func proxyDockerHostPort(port string) (string, error) {
 	return addr[(i + 1):], nil
 }
 
-func runRegistry(t *testing.T) (name, localPort, remotePort string) {
-	t.Helper()
-	name = "test-registry-" + randString(10)
-	assertNil(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", name, "registry:2").Run())
-	port, err := exec.Command("docker", "inspect", name, "-f", `{{index (index (index .NetworkSettings.Ports "5000/tcp") 0) "HostPort"}}`).Output()
-	assertNil(t, err)
-	trimmedPort := strings.TrimSpace(string(port))
-	if os.Getenv("DOCKER_HOST") != "" {
-		addr, err := proxyDockerHostPort(trimmedPort)
-		assertNil(t, err)
-		return name, addr, trimmedPort
-	}
+var runRegistryName, runRegistryLocalPort, runRegistryRemotePort string
+var runRegistryOnce sync.Once
 
-	return name, trimmedPort, trimmedPort
+func runRegistry(t *testing.T) (name, localPort string) {
+	t.Helper()
+	runRegistryOnce.Do(func() {
+		runRegistryName = "test-registry-" + randString(10)
+		assertNil(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", runRegistryName, "registry:2").Run())
+		port, err := exec.Command("docker", "inspect", runRegistryName, "-f", `{{index (index (index .NetworkSettings.Ports "5000/tcp") 0) "HostPort"}}`).Output()
+		assertNil(t, err)
+		runRegistryRemotePort = strings.TrimSpace(string(port))
+		if os.Getenv("DOCKER_HOST") != "" {
+			runRegistryLocalPort, err = proxyDockerHostPort(runRegistryRemotePort)
+			assertNil(t, err)
+		} else {
+			runRegistryLocalPort = runRegistryRemotePort
+		}
+	})
+	return runRegistryName, runRegistryLocalPort
 }
 
 func httpGet(t *testing.T, url string) string {
+	t.Helper()
 	if os.Getenv("DOCKER_HOST") == "" {
 		resp, err := http.Get(url)
 		assertNil(t, err)
@@ -832,9 +828,7 @@ func httpGet(t *testing.T, url string) string {
 		assertNil(t, err)
 		return string(b)
 	} else {
-		b, err := exec.Command("docker", "run", "--entrypoint=''", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url).Output()
-		assertNil(t, err)
-		return string(b)
+		return run(t, exec.Command("docker", "run", "--log-driver=none", "--entrypoint=", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url))
 	}
 }
 
@@ -842,8 +836,8 @@ func copyWorkspaceToDocker(t *testing.T, srcPath, destVolume string) {
 	t.Helper()
 	ctrName := uuid.New().String()
 	defer exec.Command("docker", "rm", ctrName).Run()
-	assertNil(t, exec.Command("docker", "create", "--name", ctrName, "-v", destVolume+":/workspace", "packs/samples", "true").Run())
-	assertNil(t, exec.Command("docker", "cp", srcPath+"/.", ctrName+":/workspace/").Run())
+	run(t, exec.Command("docker", "create", "--name", ctrName, "-v", destVolume+":/workspace", "packs/samples", "true"))
+	run(t, exec.Command("docker", "cp", srcPath+"/.", ctrName+":/workspace/"))
 }
 
 func readFromDocker(t *testing.T, volume, path string) string {
@@ -859,9 +853,18 @@ func readFromDocker(t *testing.T, volume, path string) string {
 func run(t *testing.T, cmd *exec.Cmd) string {
 	t.Helper()
 
-	output, err := cmd.CombinedOutput()
+	if runRegistryLocalPort != "" && runRegistryRemotePort != "" {
+		for i, arg := range cmd.Args {
+			cmd.Args[i] = strings.Replace(arg, "localhost:"+runRegistryLocalPort, "localhost:"+runRegistryRemotePort, -1)
+		}
+	}
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	output, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("Failed to execute command: %v, %s, %s", cmd.Args, err, output)
+		t.Fatalf("Failed to execute command: %v, %s, %s, %s", cmd.Args, err, stderr.String(), output)
 	}
 
 	return string(output)
