@@ -21,6 +21,7 @@ import (
 	"github.com/sclevine/spec/report"
 
 	"github.com/buildpack/pack/docker"
+	"github.com/buildpack/pack/testhelpers"
 )
 
 var pack string
@@ -49,6 +50,7 @@ func TestPack(t *testing.T) {
 	assertNil(t, dockerCli.PullImage("registry:2"))
 	assertNil(t, dockerCli.PullImage("sclevine/test"))
 	assertNil(t, dockerCli.PullImage("packs/samples"))
+	defer stopRegistry(t)
 
 	spec.Run(t, "pack", testPack, spec.Report(report.Terminal{}))
 }
@@ -647,4 +649,39 @@ func contains(arr []string, val string) bool {
 		}
 	}
 	return false
+}
+
+// var randString func(n int) string
+// var assertEq func(t *testing.T, actual, expected interface{})
+// var assertSameInstance func(t *testing.T, actual, expected interface{})
+// var assertMatch func(t *testing.T, actual string, expected *regexp.Regexp)
+// var assertError func(t *testing.T, actual error, expected string)
+// var assertContains func(t *testing.T, actual, expected string)
+// var assertNil func(t *testing.T, actual interface{})
+// var assertNotNil func(t *testing.T, actual interface{})
+// var contains func(arr []string, val string) bool
+// var runRegistry func(t *testing.T) (name, localPort string)
+var stopRegistry func(t *testing.T)
+
+// var httpGet func(t *testing.T, url string) string
+// var copyWorkspaceToDocker func(t *testing.T, srcPath, destVolume string)
+// var readFromDocker func(t *testing.T, volume, path string) string
+// var run func(t *testing.T, cmd *exec.Cmd) string
+
+func init() {
+	// 	randString = testhelpers.RandString
+	// 	assertEq = testhelpers.AssertEq
+	// 	assertSameInstance = testhelpers.AssertSameInstance
+	// 	assertMatch = testhelpers.AssertMatch
+	// 	assertError = testhelpers.AssertError
+	// 	assertContains = testhelpers.AssertContains
+	// 	assertNil = testhelpers.AssertNil
+	// 	assertNotNil = testhelpers.AssertNotNil
+	// 	contains = testhelpers.Contains
+	// 	runRegistry = testhelpers.RunRegistry
+	stopRegistry = testhelpers.StopRegistry
+	// 	httpGet = testhelpers.HttpGet
+	// 	copyWorkspaceToDocker = testhelpers.CopyWorkspaceToDocker
+	// 	readFromDocker = testhelpers.ReadFromDocker
+	// 	run = testhelpers.Run
 }

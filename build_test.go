@@ -7,14 +7,11 @@ import (
 	"io/ioutil"
 	"log"
 	"math/rand"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -25,10 +22,10 @@ import (
 	"github.com/buildpack/pack/fs"
 	"github.com/buildpack/pack/image"
 	"github.com/buildpack/pack/mocks"
+	"github.com/buildpack/pack/testhelpers"
 	dockertypes "github.com/docker/docker/api/types"
 	dockercontainer "github.com/docker/docker/api/types/container"
 	"github.com/golang/mock/gomock"
-	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/uuid"
 	"github.com/sclevine/spec"
@@ -41,11 +38,7 @@ func TestBuild(t *testing.T) {
 	assertNil(t, exec.Command("docker", "pull", "registry:2").Run())
 	assertNil(t, exec.Command("docker", "pull", "packs/samples").Run())
 	assertNil(t, exec.Command("docker", "pull", "packs/run").Run())
-	defer func() {
-		if runRegistryName != "" {
-			assertNil(t, exec.Command("docker", "kill", runRegistryName).Run())
-		}
-	}()
+	defer stopRegistry(t)
 
 	spec.Run(t, "build", testBuild, spec.Parallel(), spec.Report(report.Terminal{}))
 }
@@ -687,185 +680,38 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 			})
 		})
 	})
-
 }
 
-func randString(n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = 'a' + byte(rand.Intn(26))
-	}
-	return string(b)
-}
+var randString func(n int) string
+var assertEq func(t *testing.T, actual, expected interface{})
+var assertSameInstance func(t *testing.T, actual, expected interface{})
+var assertMatch func(t *testing.T, actual string, expected *regexp.Regexp)
+var assertError func(t *testing.T, actual error, expected string)
+var assertContains func(t *testing.T, actual, expected string)
+var assertNil func(t *testing.T, actual interface{})
+var assertNotNil func(t *testing.T, actual interface{})
+var contains func(arr []string, val string) bool
+var runRegistry func(t *testing.T) (name, localPort string)
+var stopRegistry func(t *testing.T)
+var httpGet func(t *testing.T, url string) string
+var copyWorkspaceToDocker func(t *testing.T, srcPath, destVolume string)
+var readFromDocker func(t *testing.T, volume, path string) string
+var run func(t *testing.T, cmd *exec.Cmd) string
 
-// Assert deep equality (and provide useful difference as a test failure)
-func assertEq(t *testing.T, actual, expected interface{}) {
-	t.Helper()
-	if diff := cmp.Diff(actual, expected); diff != "" {
-		t.Fatal(diff)
-	}
-}
-
-// Assert the simplistic pointer (or literal value) equality
-func assertSameInstance(t *testing.T, actual, expected interface{}) {
-	t.Helper()
-	if actual != expected {
-		t.Fatalf("Expected %s and %s to be pointers to the variable", actual, expected)
-	}
-}
-
-func assertMatch(t *testing.T, actual string, expected *regexp.Regexp) {
-	t.Helper()
-	if !expected.Match([]byte(actual)) {
-		t.Fatal(cmp.Diff(actual, expected))
-	}
-}
-
-func assertError(t *testing.T, actual error, expected string) {
-	t.Helper()
-	if actual == nil {
-		t.Fatalf("Expected an error but got nil")
-	}
-	if actual.Error() != expected {
-		t.Fatalf(`Expected error to equal "%s", got "%s"`, expected, actual.Error())
-	}
-}
-
-func assertContains(t *testing.T, actual, expected string) {
-	t.Helper()
-	if !strings.Contains(actual, expected) {
-		t.Fatalf("Expected: '%s' inside '%s'", expected, actual)
-	}
-}
-
-func assertNil(t *testing.T, actual interface{}) {
-	t.Helper()
-	if actual != nil {
-		t.Fatalf("Expected nil: %s", actual)
-	}
-}
-
-func assertNotNil(t *testing.T, actual interface{}) {
-	t.Helper()
-	if actual == nil {
-		t.Fatal("Expected not nil")
-	}
-}
-
-func contains(arr []string, val string) bool {
-	for _, v := range arr {
-		if v == val {
-			return true
-		}
-	}
-	return false
-}
-
-func proxyDockerHostPort(port string) (string, error) {
-	ln, err := net.Listen("tcp", ":0")
-	if err != nil {
-		return "", err
-	}
-	go func() {
-		// TODO exit somehow.
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-			go func(conn net.Conn) {
-				defer conn.Close()
-				cmd := exec.Command("docker", "run", "-i", "--log-driver=none", "-a", "stdin", "-a", "stdout", "-a", "stderr", "--network=host", "alpine/socat", "-", "TCP:localhost:"+port)
-				cmd.Stdin = conn
-				cmd.Stdout = conn
-				cmd.Stderr = os.Stderr
-				if err := cmd.Run(); err != nil {
-					log.Println(err)
-				}
-			}(conn)
-		}
-	}()
-	addr := ln.Addr().String()
-	i := strings.LastIndex(addr, ":")
-	if i == -1 {
-		return "", fmt.Errorf("finding port: ':' not found in '%s'", addr)
-	}
-	return addr[(i + 1):], nil
-}
-
-var runRegistryName, runRegistryLocalPort, runRegistryRemotePort string
-var runRegistryOnce sync.Once
-
-func runRegistry(t *testing.T) (name, localPort string) {
-	t.Helper()
-	runRegistryOnce.Do(func() {
-		runRegistryName = "test-registry-" + randString(10)
-		assertNil(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", runRegistryName, "registry:2").Run())
-		port, err := exec.Command("docker", "inspect", runRegistryName, "-f", `{{index (index (index .NetworkSettings.Ports "5000/tcp") 0) "HostPort"}}`).Output()
-		assertNil(t, err)
-		runRegistryRemotePort = strings.TrimSpace(string(port))
-		if os.Getenv("DOCKER_HOST") != "" {
-			runRegistryLocalPort, err = proxyDockerHostPort(runRegistryRemotePort)
-			assertNil(t, err)
-		} else {
-			runRegistryLocalPort = runRegistryRemotePort
-		}
-	})
-	return runRegistryName, runRegistryLocalPort
-}
-
-func httpGet(t *testing.T, url string) string {
-	t.Helper()
-	if os.Getenv("DOCKER_HOST") == "" {
-		resp, err := http.Get(url)
-		assertNil(t, err)
-		defer resp.Body.Close()
-		if resp.StatusCode >= 300 {
-			t.Fatalf("HTTP Status was bad: %s => %d", url, resp.StatusCode)
-		}
-		b, err := ioutil.ReadAll(resp.Body)
-		assertNil(t, err)
-		return string(b)
-	} else {
-		return run(t, exec.Command("docker", "run", "--log-driver=none", "--entrypoint=", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url))
-	}
-}
-
-func copyWorkspaceToDocker(t *testing.T, srcPath, destVolume string) {
-	t.Helper()
-	ctrName := uuid.New().String()
-	defer exec.Command("docker", "rm", ctrName).Run()
-	run(t, exec.Command("docker", "create", "--name", ctrName, "-v", destVolume+":/workspace", "packs/samples", "true"))
-	run(t, exec.Command("docker", "cp", srcPath+"/.", ctrName+":/workspace/"))
-}
-
-func readFromDocker(t *testing.T, volume, path string) string {
-	t.Helper()
-
-	var buf bytes.Buffer
-	cmd := exec.Command("docker", "run", "-v", volume+":/workspace", "packs/samples", "cat", path)
-	cmd.Stdout = &buf
-	assertNil(t, cmd.Run())
-	return buf.String()
-}
-
-func run(t *testing.T, cmd *exec.Cmd) string {
-	t.Helper()
-
-	if runRegistryLocalPort != "" && runRegistryRemotePort != "" {
-		for i, arg := range cmd.Args {
-			cmd.Args[i] = strings.Replace(arg, "localhost:"+runRegistryLocalPort, "localhost:"+runRegistryRemotePort, -1)
-		}
-	}
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	output, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Failed to execute command: %v, %s, %s, %s", cmd.Args, err, stderr.String(), output)
-	}
-
-	return string(output)
+func init() {
+	randString = testhelpers.RandString
+	assertEq = testhelpers.AssertEq
+	assertSameInstance = testhelpers.AssertSameInstance
+	assertMatch = testhelpers.AssertMatch
+	assertError = testhelpers.AssertError
+	assertContains = testhelpers.AssertContains
+	assertNil = testhelpers.AssertNil
+	assertNotNil = testhelpers.AssertNotNil
+	contains = testhelpers.Contains
+	runRegistry = testhelpers.RunRegistry
+	stopRegistry = testhelpers.StopRegistry
+	httpGet = testhelpers.HttpGet
+	copyWorkspaceToDocker = testhelpers.CopyWorkspaceToDocker
+	readFromDocker = testhelpers.ReadFromDocker
+	run = testhelpers.Run
 }
