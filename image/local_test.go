@@ -43,8 +43,8 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		repoName = "pack-image-test-" + h.RandString(10)
 	})
 	it.After(func() {
-		exec.Command("docker", "rmi", "-f", repoName).Run()
-		exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' %s)`, repoName)).Run()
+		h.RunE(exec.Command("docker", "rmi", "-f", repoName))
+		h.RunE(exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' %s)`, repoName)))
 	})
 
 	when("#Label", func() {
@@ -199,7 +199,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				`, oldBase))
 			})
 			it.After(func() {
-				exec.Command("docker", "rmi", oldBase, newBase).Run()
+				h.RunE(exec.Command("docker", "rmi", "-f", oldBase, newBase))
 			})
 
 			it("switches the base", func() {

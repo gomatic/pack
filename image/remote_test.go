@@ -47,11 +47,10 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 			Stdout: &buf,
 			FS:     &fs.FS{},
 		}
-		repoName = "localhost:" + registryPort + "/pack-image-test-" + h.RandString(10)
+		repoName = "localhost:" + registryPort + "/" + repoNameNoHost
 	})
 	it.After(func() {
-		exec.Command("docker", "rmi", "-f", repoName).Run()
-		exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' %s)`, repoName)).Run()
+		h.RemoveImage(repoName)
 	})
 
 	when("#Label", func() {
@@ -64,7 +63,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				`)
 				h.Run(t, cmd)
 				h.Run(t, exec.Command("docker", "push", repoName))
-				h.Run(t, exec.Command("docker", "rmi", repoName))
+				h.Run(t, exec.Command("docker", "rmi", "-f", repoName))
 			})
 
 			it("returns the label value", func() {
@@ -124,10 +123,10 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				`)
 				h.Run(t, cmd)
 				h.Run(t, exec.Command("docker", "push", repoName))
-				h.Run(t, exec.Command("docker", "rmi", repoName))
+				h.Run(t, exec.Command("docker", "rmi", "-f", repoName))
 			})
 			it.After(func() {
-				exec.Command("docker", "rmi", repoName).Run()
+				h.RunE(exec.Command("docker", "rmi", "-f", repoName))
 			})
 
 			it("sets label on img object", func() {
@@ -182,7 +181,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				`, oldBase))
 			})
 			it.After(func() {
-				exec.Command("docker", "rmi", oldBase, newBase).Run()
+				h.RunE(exec.Command("docker", "rmi", "-f", oldBase, newBase))
 			})
 
 			it("switches the base", func() {
@@ -246,7 +245,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				h.AssertNil(t, err)
 
 				// After Pull
-				defer exec.Command("docker", "rmi", repoName+"@"+imgDigest).Run()
+				defer h.RunE(exec.Command("docker", "rmi", "-f", repoName+"@"+imgDigest))
 				h.Run(t, exec.Command("docker", "pull", repoName+"@"+imgDigest))
 				label := h.Run(t, exec.Command("docker", "inspect", repoName+"@"+imgDigest, "-f", `{{.Config.Labels.mykey}}`))
 				h.AssertEq(t, strings.TrimSpace(label), "newValue")
@@ -257,9 +256,8 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 
 func createImageOnRemote(t *testing.T, repoName, dockerFile string) string {
 	t.Helper()
-	defer exec.Command("docker", "rmi", repoName+":latest").Run()
+	defer h.RunE(exec.Command("docker", "rmi", "-f", repoName+":latest"))
 
-	// fmt.Println("DG: DOCKERFILE:", dockerFile)
 	dockerFile = h.ReplaceLocalDockerPortWithRemotePort(dockerFile)
 
 	cmd := exec.Command("docker", "build", "-t", repoName+":latest", "-")

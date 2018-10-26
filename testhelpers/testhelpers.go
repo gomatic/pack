@@ -107,11 +107,13 @@ func proxyDockerHostPort(port string) (string, error) {
 			}
 			go func(conn net.Conn) {
 				defer conn.Close()
-				cmd := exec.Command("docker", "run", "-i", "--log-driver=none", "-a", "stdin", "-a", "stdout", "-a", "stderr", "--network=host", "alpine/socat", "-", "TCP:localhost:"+port)
+				var stderr bytes.Buffer
+				cmd := exec.Command("docker", "run", "--log-driver=none", "-i", "-a", "stdin", "-a", "stdout", "-a", "stderr", "--network=host", "alpine/socat", "-", "TCP:localhost:"+port)
 				cmd.Stdin = conn
 				cmd.Stdout = conn
-				cmd.Stderr = os.Stderr
+				cmd.Stderr = &stderr
 				if err := cmd.Run(); err != nil {
+					log.Println(stderr.String())
 					log.Println(err)
 				}
 			}(conn)
@@ -132,7 +134,7 @@ func RunRegistry(t *testing.T) (localPort string) {
 	t.Helper()
 	runRegistryOnce.Do(func() {
 		runRegistryName = "test-registry-" + RandString(10)
-		Run(t, exec.Command("docker", "run", "-d", "--rm", "-p", ":5000", "--name", runRegistryName, "registry:2"))
+		Run(t, exec.Command("docker", "run", "--log-driver=none", "-d", "--rm", "-p", ":5000", "--name", runRegistryName, "registry:2"))
 		port := Run(t, exec.Command("docker", "inspect", runRegistryName, "-f", `{{index (index (index .NetworkSettings.Ports "5000/tcp") 0) "HostPort"}}`))
 		runRegistryRemotePort = strings.TrimSpace(string(port))
 		if os.Getenv("DOCKER_HOST") != "" {
@@ -179,11 +181,19 @@ func CopyWorkspaceToDocker(t *testing.T, srcPath, destVolume string) {
 
 func ReadFromDocker(t *testing.T, volume, path string) string {
 	t.Helper()
-	return Run(t, exec.Command("docker", "run", "-v", volume+":/workspace", "packs/samples", "cat", path))
+	return Run(t, exec.Command("docker", "run", "--log-driver=none", "-v", volume+":/workspace", "packs/samples", "cat", path))
 }
 
 func ReplaceLocalDockerPortWithRemotePort(s string) string {
 	return strings.Replace(s, "localhost:"+runRegistryLocalPort, "localhost:"+runRegistryRemotePort, -1)
+}
+
+func RemoveImage(name string) error {
+	if strings.HasPrefix(name, "localhost:") {
+		name = regexp.MustCompile(`localhost:\d+`).ReplaceAllString(name, "localhost:*")
+	}
+	_, err := RunE(exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' %s)`, name)))
+	return err
 }
 
 func Run(t *testing.T, cmd *exec.Cmd) string {
@@ -200,7 +210,9 @@ func RunE(cmd *exec.Cmd) (string, error) {
 		}
 	}
 
-	// fmt.Println("DG: RUN:", cmd.Args)
+	if len(cmd.Args) >= 2 && cmd.Args[0] == "docker" && cmd.Args[1] == "rmi" {
+		fmt.Println("DG:", cmd.Args)
+	}
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
