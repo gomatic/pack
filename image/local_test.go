@@ -98,14 +98,11 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		when("image exists and has a digest", func() {
 			var expectedDigest string
 			it.Before(func() {
-				var buf bytes.Buffer
-				cmd := exec.Command("docker", "pull", "busybox:1.29")
-				cmd.Stdout = &buf
-				h.Run(t, cmd)
+				stdout := h.Run(t, exec.Command("docker", "pull", "busybox:1.29"))
 				regex := regexp.MustCompile(`Digest: (sha256:\w*)`)
-				matches := regex.FindStringSubmatch(buf.String())
+				matches := regex.FindStringSubmatch(stdout)
 				if len(matches) < 2 {
-					t.Fatalf("digest regexp failed")
+					t.Fatalf("digest regexp failed: %s", stdout)
 				}
 				expectedDigest = matches[1]
 			})

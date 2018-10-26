@@ -145,7 +145,8 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				h.AssertNil(t, err)
 
 				// Before Pull
-				label := h.Run(t, exec.Command("docker", "inspect", repoName, "-f", `{{.Config.Labels.mykey}}`))
+				label, err := h.RunE(exec.Command("docker", "inspect", repoName, "-f", `{{.Config.Labels.mykey}}`))
+				h.AssertNotNil(t, err)
 				h.AssertEq(t, strings.TrimSpace(label), "")
 
 				// After Pull
@@ -256,7 +257,10 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 
 func createImageOnRemote(t *testing.T, repoName, dockerFile string) string {
 	t.Helper()
-	defer exec.Command("docker", "rmi", repoName+":latest")
+	defer exec.Command("docker", "rmi", repoName+":latest").Run()
+
+	// fmt.Println("DG: DOCKERFILE:", dockerFile)
+	dockerFile = h.ReplaceLocalDockerPortWithRemotePort(dockerFile)
 
 	cmd := exec.Command("docker", "build", "-t", repoName+":latest", "-")
 	cmd.Stdin = strings.NewReader(dockerFile)

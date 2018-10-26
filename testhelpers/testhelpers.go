@@ -182,22 +182,33 @@ func ReadFromDocker(t *testing.T, volume, path string) string {
 	return Run(t, exec.Command("docker", "run", "-v", volume+":/workspace", "packs/samples", "cat", path))
 }
 
+func ReplaceLocalDockerPortWithRemotePort(s string) string {
+	return strings.Replace(s, "localhost:"+runRegistryLocalPort, "localhost:"+runRegistryRemotePort, -1)
+}
+
 func Run(t *testing.T, cmd *exec.Cmd) string {
 	t.Helper()
+	txt, err := RunE(cmd)
+	AssertNil(t, err)
+	return txt
+}
 
+func RunE(cmd *exec.Cmd) (string, error) {
 	if cmd.Args[0] == "docker" && runRegistryLocalPort != "" && runRegistryRemotePort != "" {
 		for i, arg := range cmd.Args {
-			cmd.Args[i] = strings.Replace(arg, "localhost:"+runRegistryLocalPort, "localhost:"+runRegistryRemotePort, -1)
+			cmd.Args[i] = ReplaceLocalDockerPortWithRemotePort(arg)
 		}
 	}
+
+	// fmt.Println("DG: RUN:", cmd.Args)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	output, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("Failed to execute command: %v, %s, %s, %s", cmd.Args, err, stderr.String(), output)
+		return "", fmt.Errorf("Failed to execute command: %v, %s, %s, %s", cmd.Args, err, stderr.String(), output)
 	}
 
-	return string(output)
+	return string(output), nil
 }
