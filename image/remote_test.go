@@ -181,7 +181,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				`, oldBase))
 			})
 			it.After(func() {
-				h.RemoveImage(oldBase, newBase))
+				h.RemoveImage(oldBase, newBase)
 			})
 
 			it("switches the base", func() {
@@ -245,7 +245,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				h.AssertNil(t, err)
 
 				// After Pull
-				defer h.RemoveImage(repoName+"@"+imgDigest)
+				defer h.RemoveImage(repoName + "@" + imgDigest)
 				h.Run(t, exec.Command("docker", "pull", repoName+"@"+imgDigest))
 				label := h.Run(t, exec.Command("docker", "inspect", repoName+"@"+imgDigest, "-f", `{{.Config.Labels.mykey}}`))
 				h.AssertEq(t, strings.TrimSpace(label), "newValue")
