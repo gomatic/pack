@@ -151,6 +151,7 @@ func RunRegistry(t *testing.T) (localPort string) {
 func StopRegistry(t *testing.T) {
 	if runRegistryName != "" {
 		Run(t, exec.Command("docker", "kill", runRegistryName))
+		RunE(exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' 'localhost:%s/*')`, runRegistryRemotePort)))
 	}
 }
 
