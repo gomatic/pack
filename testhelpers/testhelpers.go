@@ -188,12 +188,18 @@ func ReplaceLocalDockerPortWithRemotePort(s string) string {
 	return strings.Replace(s, "localhost:"+runRegistryLocalPort, "localhost:"+runRegistryRemotePort, -1)
 }
 
-func RemoveImage(name string) error {
-	if strings.HasPrefix(name, "localhost:") {
-		name = regexp.MustCompile(`localhost:\d+`).ReplaceAllString(name, "localhost:*")
+func RemoveImage(names ...string) error {
+	var firstError error
+	for _, name := range names {
+		if strings.HasPrefix(name, "localhost:") {
+			name = regexp.MustCompile(`localhost:\d+`).ReplaceAllString(name, "localhost:*")
+		}
+		_, err := RunE(exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' %s)`, name)))
+		if firstError == nil {
+			firstError = err
+		}
 	}
-	_, err := RunE(exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' %s)`, name)))
-	return err
+	return firstError
 }
 
 func Run(t *testing.T, cmd *exec.Cmd) string {
@@ -208,10 +214,6 @@ func RunE(cmd *exec.Cmd) (string, error) {
 		for i, arg := range cmd.Args {
 			cmd.Args[i] = ReplaceLocalDockerPortWithRemotePort(arg)
 		}
-	}
-
-	if len(cmd.Args) >= 2 && cmd.Args[0] == "docker" && cmd.Args[1] == "rmi" {
-		fmt.Println("DG:", cmd.Args)
 	}
 
 	var stderr bytes.Buffer

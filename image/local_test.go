@@ -43,8 +43,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		repoName = "pack-image-test-" + h.RandString(10)
 	})
 	it.After(func() {
-		h.RunE(exec.Command("docker", "rmi", "-f", repoName))
-		h.RunE(exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' %s)`, repoName)))
+		h.RemoveImage(repoName)
 	})
 
 	when("#Label", func() {
@@ -107,11 +106,6 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				expectedDigest = matches[1]
 			})
 
-			it.After(func() {
-				cmd := exec.Command("docker", "rmi", "busybox:1.29")
-				h.Run(t, cmd)
-			})
-
 			it("returns the image digest", func() {
 				img, _ := factory.NewLocal("busybox:1.29", true)
 				digest, err := img.Digest()
@@ -131,8 +125,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			})
 
 			it.After(func() {
-				cmd := exec.Command("docker", "rmi", repoName)
-				h.Run(t, cmd)
+				h.RemoveImage(repoName)
 			})
 
 			it("returns an empty string", func() {
@@ -199,7 +192,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				`, oldBase))
 			})
 			it.After(func() {
-				h.RunE(exec.Command("docker", "rmi", "-f", oldBase, newBase))
+				h.RemoveImage(oldBase, newBase)
 			})
 
 			it("switches the base", func() {

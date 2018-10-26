@@ -398,7 +398,7 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 				h.AssertNil(t, cmd.Run())
 			})
 			it.After(func() {
-				exec.Command("docker", "rmi", subject.RepoName).Run()
+				h.RemoveImage(subject.RepoName)
 			})
 
 			when("publish", func() {
@@ -412,7 +412,7 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 
 					h.Run(t, exec.Command("docker", "tag", oldRepoName, subject.RepoName))
 					h.Run(t, exec.Command("docker", "push", subject.RepoName))
-					h.Run(t, exec.Command("docker", "rmi", oldRepoName, subject.RepoName))
+					h.RemoveImage(oldRepoName, subject.RepoName)
 				})
 
 				it("tells the user nothing", func() {
@@ -539,7 +539,7 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 			runSHA = imageSHA(t, subject.RunImage)
 			runTopLayer = topLayer(t, subject.RunImage)
 		})
-		it.After(func() { exec.Command("docker", "rmi", subject.RepoName).Run() })
+		it.After(func() { h.RemoveImage(subject.RepoName) })
 
 		when("no previous image exists", func() {
 			when("publish", func() {
@@ -589,7 +589,7 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 				it.Before(func() { subject.Publish = false })
 				it.After(func() {
 					if subject.Builder != "" {
-						exec.Command("docker", "rmi", subject.Builder).Run()
+						h.RemoveImage(subject.Builder)
 					}
 				})
 

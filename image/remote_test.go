@@ -47,7 +47,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 			Stdout: &buf,
 			FS:     &fs.FS{},
 		}
-		repoName = "localhost:" + registryPort + "/" + repoNameNoHost
+		repoName = "localhost:" + registryPort + "/pack-image-test-" + h.RandString(10)
 	})
 	it.After(func() {
 		h.RemoveImage(repoName)
@@ -63,7 +63,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				`)
 				h.Run(t, cmd)
 				h.Run(t, exec.Command("docker", "push", repoName))
-				h.Run(t, exec.Command("docker", "rmi", "-f", repoName))
+				h.RemoveImage(repoName)
 			})
 
 			it("returns the label value", func() {
@@ -123,10 +123,10 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				`)
 				h.Run(t, cmd)
 				h.Run(t, exec.Command("docker", "push", repoName))
-				h.Run(t, exec.Command("docker", "rmi", "-f", repoName))
+				h.RemoveImage(repoName)
 			})
 			it.After(func() {
-				h.RunE(exec.Command("docker", "rmi", "-f", repoName))
+				h.RemoveImage(repoName)
 			})
 
 			it("sets label on img object", func() {
@@ -181,7 +181,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				`, oldBase))
 			})
 			it.After(func() {
-				h.RunE(exec.Command("docker", "rmi", "-f", oldBase, newBase))
+				h.RemoveImage(oldBase, newBase))
 			})
 
 			it("switches the base", func() {
@@ -245,7 +245,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 				h.AssertNil(t, err)
 
 				// After Pull
-				defer h.RunE(exec.Command("docker", "rmi", "-f", repoName+"@"+imgDigest))
+				defer h.RemoveImage(repoName+"@"+imgDigest)
 				h.Run(t, exec.Command("docker", "pull", repoName+"@"+imgDigest))
 				label := h.Run(t, exec.Command("docker", "inspect", repoName+"@"+imgDigest, "-f", `{{.Config.Labels.mykey}}`))
 				h.AssertEq(t, strings.TrimSpace(label), "newValue")
@@ -256,7 +256,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 
 func createImageOnRemote(t *testing.T, repoName, dockerFile string) string {
 	t.Helper()
-	defer h.RunE(exec.Command("docker", "rmi", "-f", repoName+":latest"))
+	defer h.RemoveImage(repoName)
 
 	dockerFile = h.ReplaceLocalDockerPortWithRemotePort(dockerFile)
 
