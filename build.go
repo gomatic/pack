@@ -4,29 +4,31 @@ import (
 	"archive/tar"
 	"context"
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
+	"github.com/buildpack/lifecycle/img"
+	"github.com/buildpack/pack/config"
+	"github.com/buildpack/pack/docker"
+	"github.com/buildpack/pack/fs"
+	"github.com/buildpack/pack/image"
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	dockercli "github.com/docker/docker/client"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
-
-	"github.com/buildpack/pack/config"
-	"github.com/buildpack/pack/docker"
-	"github.com/buildpack/pack/fs"
-	"github.com/buildpack/pack/image"
 )
 
 type BuildFactory struct {
@@ -70,13 +72,13 @@ type BuildConfig struct {
 }
 
 const (
-	launchDir      = "/workspace"
-	cacheDir       = "/cache"
-	buildpacksDir  = "/buildpacks"
-	platformDir    = "/platform"
-	orderPath      = "/buildpacks/order.toml"
-	groupPath      = `/workspace/group.toml`
-	planPath       = "/workspace/plan.toml"
+	launchDir     = "/workspace"
+	cacheDir      = "/cache"
+	buildpacksDir = "/buildpacks"
+	platformDir   = "/platform"
+	orderPath     = "/buildpacks/order.toml"
+	groupPath     = `/workspace/group.toml`
+	planPath      = "/workspace/plan.toml"
 )
 
 func DefaultBuildFactory() (*BuildFactory, error) {
@@ -455,33 +457,140 @@ func (b *BuildConfig) Build() error {
 }
 
 func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
-	uid, gid, err := b.packUidGid(b.Builder)
+	ctx := context.Background()
+	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
+		Image: b.Builder,
+		Cmd: []string{
+			"/lifecycle/exporter",
+			"-dryrun", "/tmp/pack-exporter",
+			"-image", b.RunImage,
+			"-launch", launchDir,
+			"-group", groupPath,
+			b.RepoName,
+		},
+	}, &container.HostConfig{
+		Binds: []string{
+			fmt.Sprintf("%s:%s:", b.WorkspaceVolume, launchDir),
+		},
+	}, nil, "")
 	if err != nil {
-		return errors.Wrap(err, "export")
+		return errors.Wrap(err, "export container create")
+	}
+	defer b.Cli.ContainerRemove(ctx, ctr.ID, dockertypes.ContainerRemoveOptions{})
+
+	if err := b.Cli.RunContainer(ctx, ctr.ID, b.Stdout, b.Stderr); err != nil {
+		return errors.Wrap(err, "run lifecycle/exporter")
+	}
+
+	r, _, err := b.Cli.CopyFromContainer(ctx, ctr.ID, "/tmp/pack-exporter")
+	if err != nil {
+		return errors.Wrap(err, "copy from exporter container")
+	}
+	defer r.Close()
+
+	tmpDir, err := ioutil.TempDir("/tmp", "pack.build.")
+	if err != nil {
+		return errors.Wrap(err, "tmpdir for exporter")
+	}
+	// defer os.RemoveAll(tmpDir)
+	defer fmt.Println("TMPDIR:", tmpDir)
+
+	if err := b.FS.Untar(r, tmpDir); err != nil {
+		return errors.Wrap(err, "untar from exporter container")
 	}
 
 	if b.Publish {
-		localWorkspaceDir, cleanup, err := b.exportVolume(b.Builder, b.WorkspaceVolume)
+		runImageStore, err := img.NewRegistry(b.RunImage)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "access")
 		}
-		defer cleanup()
+		runImage, err := runImageStore.Image()
+		if err != nil {
+			return errors.Wrap(err, "access")
+		}
 
-		imgSHA, err := exportRegistry(group, uid, gid, localWorkspaceDir, b.RepoName, b.RunImage, b.Stdout, b.Stderr)
-		if err != nil {
-			return err
+		exporter := &lifecycle.Exporter{
+			Buildpacks: group.Buildpacks,
+			Out:        os.Stdout,
+			Err:        os.Stderr,
+			// UID:        uid,
+			// GID:        gid,
 		}
-		b.Log.Printf("\n*** Image: %s@%s\n", b.RepoName, imgSHA)
+		newImage, err := exporter.Stage2(
+			filepath.Join(tmpDir, "pack-exporter"),
+			launchDir,
+			runImage,
+			nil, // origImage,
+		)
+		if err != nil {
+			return errors.Wrap(err, "stage2")
+		}
+		repoStore, err := img.NewRegistry(b.RepoName)
+		if err != nil {
+			return errors.Wrap(err, "access")
+		}
+		if err := repoStore.Write(newImage); err != nil {
+			return errors.Wrap(err, "write")
+		}
 	} else {
-		var buildpacks []string
-		for _, b := range group.Buildpacks {
-			buildpacks = append(buildpacks, b.ID)
-		}
+		var metadata lifecycle.AppImageMetadata
+		bData, err := ioutil.ReadFile(filepath.Join(tmpDir, "pack-exporter", "metadata.json"))
 
-		if err := exportDaemon(b.Cli, buildpacks, b.WorkspaceVolume, b.RepoName, b.RunImage, b.Stdout, uid, gid); err != nil {
-			return err
+		if err != nil {
+			return errors.Wrap(err, "read exporter metadata")
+		}
+		if err := json.Unmarshal(bData, &metadata); err != nil {
+			return errors.Wrap(err, "read exporter metadata")
+		}
+		fmt.Printf("DG: METADATA: %#v\n", metadata)
+		dockerFile := "FROM " + b.RunImage + "\n"
+		dockerFile += "ADD " + strings.TrimPrefix(metadata.App.SHA, "sha256:") + ".tar /\n"
+		dockerFile += "ADD " + strings.TrimPrefix(metadata.Config.SHA, "sha256:") + ".tar /\n"
+		for _, bp := range metadata.Buildpacks {
+			// TODO do alpha sort
+			for _, layer := range bp.Layers {
+				dockerFile += "ADD " + strings.TrimPrefix(layer.SHA, "sha256:") + ".tar /\n"
+			}
+		}
+		bData, err = json.Marshal(metadata)
+		if err != nil {
+			return errors.Wrap(err, "write exporter metadata")
+		}
+		dockerFile += "LABEL " + lifecycle.MetadataLabel + " '" + string(bData) + "'"
+		if err := ioutil.WriteFile(filepath.Join(tmpDir, "pack-exporter", "Dockerfile"), []byte(dockerFile), 0666); err != nil {
+			return errors.Wrap(err, "write exporter dockerfile")
+		}
+		cmd := exec.Command("docker", "build", "-t", b.RepoName, ".")
+		cmd.Dir = filepath.Join(tmpDir, "pack-exporter")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return errors.Wrap(err, "exporter build image")
 		}
 	}
+
+	// if b.Publish {
+	// 	localWorkspaceDir, cleanup, err := b.exportVolume(b.Builder, b.WorkspaceVolume)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	defer cleanup()
+
+	// 	imgSHA, err := exportRegistry(group, uid, gid, localWorkspaceDir, b.RepoName, b.RunImage, b.Stdout, b.Stderr)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	b.Log.Printf("\n*** Image: %s@%s\n", b.RepoName, imgSHA)
+	// } else {
+	// 	var buildpacks []string
+	// 	for _, b := range group.Buildpacks {
+	// 		buildpacks = append(buildpacks, b.ID)
+	// 	}
+
+	// 	if err := exportDaemon(b.Cli, buildpacks, b.WorkspaceVolume, b.RepoName, b.RunImage, b.Stdout, uid, gid); err != nil {
+	// 		return err
+	// 	}
+	// }
 
 	return nil
 }
