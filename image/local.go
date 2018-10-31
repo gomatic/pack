@@ -162,9 +162,6 @@ func (l *local) Save() (string, error) {
 	ctx := context.Background()
 	var wg sync.WaitGroup
 
-	fmt.Println("DG: Save: 1")
-	fmt.Println("DG: Save: 2")
-
 	pr, pw := io.Pipe()
 	go func() {
 		wg.Add(1)
@@ -178,8 +175,6 @@ func (l *local) Save() (string, error) {
 	}()
 
 	tw := tar.NewWriter(pw)
-
-	fmt.Println("DG: Save: 3")
 
 	imgConfig := map[string]interface{}{
 		"os":      "linux",
@@ -201,11 +196,8 @@ func (l *local) Save() (string, error) {
 		return "", err
 	}
 
-	fmt.Println("DG: Save: 4")
-
 	var layerPaths []string
 	for _, path := range l.layerPaths {
-		fmt.Println("DG: Save: 5")
 		if path == "" {
 			layerPaths = append(layerPaths, "")
 			continue
@@ -230,10 +222,7 @@ func (l *local) Save() (string, error) {
 		f.Close()
 		layerPaths = append(layerPaths, layerName)
 
-		fmt.Println("DG: Save: 6")
 	}
-
-	fmt.Println("DG: Save: 7")
 
 	formatted, err = json.MarshalIndent([]map[string]interface{}{
 		{
@@ -253,21 +242,10 @@ func (l *local) Save() (string, error) {
 		return "", err
 	}
 
-	// hdr = &tar.Header{Name: "repositories", Mode: 0644, Size: int64(len(`{}`))}
-	// if err := tw.WriteHeader(hdr); err != nil {
-	// 	return "", err
-	// }
-	// if _, err := tw.Write([]byte(`{}`)); err != nil {
-	// 	return "", err
-	// }
-	// fmt.Println("DG: Save: 7")
-
 	tw.Close()
 	pw.Close()
-	fmt.Println("DG: Save: 8")
 
 	wg.Wait()
-	fmt.Println("DG: Save: 9")
 	return "TODO", nil
 }
 

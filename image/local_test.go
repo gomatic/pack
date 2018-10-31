@@ -242,7 +242,6 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			tarPath string
 		)
 		it.Before(func() {
-			fmt.Println("DG: 1")
 			createImageOnLocal(t, repoName, `
 					FROM busybox
 					RUN echo -n old-layer > old-layer.txt
@@ -255,7 +254,6 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			_, err = io.Copy(tarFile, tr)
 			h.AssertNil(t, err)
 			tarPath = tarFile.Name()
-			fmt.Println("DG: 2")
 
 		})
 
@@ -265,19 +263,14 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		})
 
 		it.Focus("appends a layer", func() {
-			fmt.Println("DG: 3")
 			img, err := factory.NewLocal(repoName, false)
 			h.AssertNil(t, err)
 
 			err = img.AddLayer(tarPath)
 			h.AssertNil(t, err)
 
-			fmt.Println("DG: 4")
-
 			_, err = img.Save()
 			h.AssertNil(t, err)
-
-			fmt.Println("DG: 5")
 
 			output := h.Run(t, exec.Command("docker", "run", repoName, "cat", "/old-layer.txt"))
 			h.AssertEq(t, output, "old-layer")
