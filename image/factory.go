@@ -20,6 +20,7 @@ type Image interface {
 	Rebase(string, Image) error
 	SetLabel(string, string) error
 	TopLayer() (string, error)
+	AddLayer(path string) error
 	Save() (string, error)
 }
 
@@ -28,6 +29,7 @@ type Docker interface {
 	ImageInspectWithRaw(ctx context.Context, imageID string) (types.ImageInspect, []byte, error)
 	ImageBuild(ctx context.Context, buildContext io.Reader, options types.ImageBuildOptions) (types.ImageBuildResponse, error)
 	ImageRemove(ctx context.Context, ref string, options types.ImageRemoveOptions) ([]types.ImageDeleteResponseItem, error)
+	ImageLoad(ctx context.Context, r io.Reader, quiet bool) (types.ImageLoadResponse, error)
 }
 
 type Factory struct {

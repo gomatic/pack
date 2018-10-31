@@ -4,21 +4,23 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
 	"math/rand"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/sclevine/spec"
-	"github.com/sclevine/spec/report"
-
 	"github.com/buildpack/pack/docker"
 	"github.com/buildpack/pack/fs"
 	"github.com/buildpack/pack/image"
 	h "github.com/buildpack/pack/testhelpers"
+	"github.com/sclevine/spec"
+	"github.com/sclevine/spec/report"
 )
 
 func TestLocal(t *testing.T) {
@@ -234,6 +236,56 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 
 				h.AssertEq(t, actualTopLayer, expectedTopLayer)
 			})
+		})
+	})
+
+	when("#AddLayer", func() {
+		var (
+			tarPath string
+		)
+		it.Before(func() {
+			fmt.Println("DG: 1")
+			createImageOnLocal(t, repoName, `
+					FROM busybox
+					RUN echo -n old-layer > old-layer.txt
+				`)
+			tr, err := (&fs.FS{}).CreateSingleFileTar("/new-layer.txt", "new-layer")
+			h.AssertNil(t, err)
+			tarFile, err := ioutil.TempFile("", "add-layer-test")
+			h.AssertNil(t, err)
+			defer tarFile.Close()
+			_, err = io.Copy(tarFile, tr)
+			h.AssertNil(t, err)
+			tarPath = tarFile.Name()
+			fmt.Println("DG: 2")
+
+		})
+
+		it.After(func() {
+			err := os.Remove(tarPath)
+			h.AssertNil(t, err)
+		})
+
+		it.Focus("appends a layer", func() {
+			fmt.Println("DG: 3")
+			img, err := factory.NewLocal(repoName, false)
+			h.AssertNil(t, err)
+
+			err = img.AddLayer(tarPath)
+			h.AssertNil(t, err)
+
+			fmt.Println("DG: 4")
+
+			_, err = img.Save()
+			h.AssertNil(t, err)
+
+			fmt.Println("DG: 5")
+
+			output := h.Run(t, exec.Command("docker", "run", repoName, "cat", "/old-layer.txt"))
+			h.AssertEq(t, output, "old-layer")
+
+			output = h.Run(t, exec.Command("docker", "run", repoName, "cat", "/new-layer.txt"))
+			h.AssertEq(t, output, "new-layer")
 		})
 	})
 

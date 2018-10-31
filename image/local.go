@@ -1,19 +1,26 @@
 package image
 
 import (
+	"archive/tar"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/buildpack/lifecycle/img"
-	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"io"
 	"math/rand"
+	"os"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/buildpack/lifecycle/img"
 	"github.com/buildpack/pack/fs"
 	"github.com/docker/docker/api/types"
 	dockertypes "github.com/docker/docker/api/types"
 	dockercli "github.com/docker/docker/client"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/pkg/errors"
 )
 
@@ -21,12 +28,19 @@ type local struct {
 	RepoName         string
 	Docker           Docker
 	Inspect          types.ImageInspect
+	layerPaths       []string
 	Stdout           io.Writer
 	FS               *fs.FS
 	currentTempImage string
 }
 
 func (f *Factory) NewLocal(repoName string, pull bool) (Image, error) {
+	if t, err := name.NewTag(repoName, name.WeakValidation); err != nil {
+		return nil, err
+	} else {
+		repoName = t.String()
+	}
+
 	if pull {
 		f.Log.Printf("Pulling image '%s'\n", repoName)
 		if err := f.Docker.PullImage(repoName); err != nil {
@@ -40,11 +54,12 @@ func (f *Factory) NewLocal(repoName string, pull bool) (Image, error) {
 	}
 
 	return &local{
-		Docker:   f.Docker,
-		RepoName: repoName,
-		Inspect:  inspect,
-		Stdout:   f.Stdout,
-		FS:       f.FS,
+		Docker:     f.Docker,
+		RepoName:   repoName,
+		Inspect:    inspect,
+		layerPaths: make([]string, len(inspect.RootFS.Layers)),
+		Stdout:     f.Stdout,
+		FS:         f.FS,
 	}, nil
 }
 
@@ -125,7 +140,138 @@ func (l *local) TopLayer() (string, error) {
 	return topLayer, nil
 }
 
+func (l *local) AddLayer(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return errors.Wrapf(err, "AddLayer: open layer: %s", path)
+	}
+	defer f.Close()
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		return errors.Wrapf(err, "AddLayer: calculate checksum: %s", path)
+	}
+	sha := hex.EncodeToString(hasher.Sum(make([]byte, 0, hasher.Size())))
+
+	l.Inspect.RootFS.Layers = append(l.Inspect.RootFS.Layers, "sha256:"+sha)
+	l.layerPaths = append(l.layerPaths, path)
+
+	return nil
+}
+
 func (l *local) Save() (string, error) {
+	ctx := context.Background()
+	var wg sync.WaitGroup
+
+	fmt.Println("DG: Save: 1")
+	fmt.Println("DG: Save: 2")
+
+	pr, pw := io.Pipe()
+	go func() {
+		wg.Add(1)
+		defer wg.Done()
+		res, err := l.Docker.ImageLoad(ctx, pr, true)
+		if err != nil {
+			panic(err)
+		}
+		// TODO ; NOT STDOUT
+		io.Copy(os.Stdout, res.Body)
+	}()
+
+	tw := tar.NewWriter(pw)
+
+	fmt.Println("DG: Save: 3")
+
+	imgConfig := map[string]interface{}{
+		"os":      "linux",
+		"created": time.Now().Format(time.RFC3339),
+		"rootfs": map[string][]string{
+			"diff_ids": l.Inspect.RootFS.Layers,
+		},
+	}
+	formatted, err := json.MarshalIndent(imgConfig, "", "\t")
+	if err != nil {
+		return "", err
+	}
+	imgConfigID := fmt.Sprintf("%x.json", sha256.Sum256(formatted))
+	hdr := &tar.Header{Name: imgConfigID, Mode: 0644, Size: int64(len(formatted))}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return "", err
+	}
+	if _, err := tw.Write(formatted); err != nil {
+		return "", err
+	}
+
+	fmt.Println("DG: Save: 4")
+
+	var layerPaths []string
+	for _, path := range l.layerPaths {
+		fmt.Println("DG: Save: 5")
+		if path == "" {
+			layerPaths = append(layerPaths, "")
+			continue
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		fi, err := f.Stat()
+		if err != nil {
+			return "", err
+		}
+		layerName := fmt.Sprintf("/%x.tar", sha256.Sum256([]byte(path)))
+		hdr := &tar.Header{Name: layerName, Mode: 0644, Size: int64(fi.Size())}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return "", err
+		}
+		if _, err := io.Copy(tw, f); err != nil {
+			return "", err
+		}
+		f.Close()
+		layerPaths = append(layerPaths, layerName)
+
+		fmt.Println("DG: Save: 6")
+	}
+
+	fmt.Println("DG: Save: 7")
+
+	formatted, err = json.MarshalIndent([]map[string]interface{}{
+		{
+			"Config":   imgConfigID,
+			"RepoTags": []string{l.RepoName},
+			"Layers":   layerPaths,
+		},
+	}, "", "\t")
+	if err != nil {
+		return "", err
+	}
+	hdr = &tar.Header{Name: "manifest.json", Mode: 0644, Size: int64(len(formatted))}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return "", err
+	}
+	if _, err := tw.Write(formatted); err != nil {
+		return "", err
+	}
+
+	// hdr = &tar.Header{Name: "repositories", Mode: 0644, Size: int64(len(`{}`))}
+	// if err := tw.WriteHeader(hdr); err != nil {
+	// 	return "", err
+	// }
+	// if _, err := tw.Write([]byte(`{}`)); err != nil {
+	// 	return "", err
+	// }
+	// fmt.Println("DG: Save: 7")
+
+	tw.Close()
+	pw.Close()
+	fmt.Println("DG: Save: 8")
+
+	wg.Wait()
+	fmt.Println("DG: Save: 9")
+	return "TODO", nil
+}
+
+func (l *local) SaveOLD() (string, error) {
 	dockerFile := "FROM scratch\n"
 	if l.currentTempImage != "" {
 		dockerFile = fmt.Sprintf("FROM %s\n", l.currentTempImage)
