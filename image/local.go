@@ -35,12 +35,6 @@ type local struct {
 }
 
 func (f *Factory) NewLocal(repoName string, pull bool) (Image, error) {
-	if t, err := name.NewTag(repoName, name.WeakValidation); err != nil {
-		return nil, err
-	} else {
-		repoName = t.String()
-	}
-
 	if pull {
 		f.Log.Printf("Pulling image '%s'\n", repoName)
 		if err := f.Docker.PullImage(repoName); err != nil {
@@ -162,6 +156,12 @@ func (l *local) Save() (string, error) {
 	ctx := context.Background()
 	done := make(chan error)
 
+	t, err := name.NewTag(l.RepoName, name.WeakValidation)
+	if err != nil {
+		return "", err
+	}
+	repoName := t.String()
+
 	pr, pw := io.Pipe()
 	go func() {
 		res, err := l.Docker.ImageLoad(ctx, pr, true)
@@ -176,6 +176,7 @@ func (l *local) Save() (string, error) {
 	imgConfig := map[string]interface{}{
 		"os":      "linux",
 		"created": time.Now().Format(time.RFC3339),
+		"config":  l.Inspect.Config,
 		"rootfs": map[string][]string{
 			"diff_ids": l.Inspect.RootFS.Layers,
 		},
@@ -184,8 +185,8 @@ func (l *local) Save() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	imgConfigID := fmt.Sprintf("%x.json", sha256.Sum256(formatted))
-	hdr := &tar.Header{Name: imgConfigID, Mode: 0644, Size: int64(len(formatted))}
+	imgID := fmt.Sprintf("%x", sha256.Sum256(formatted))
+	hdr := &tar.Header{Name: imgID + ".json", Mode: 0644, Size: int64(len(formatted))}
 	if err := tw.WriteHeader(hdr); err != nil {
 		return "", err
 	}
@@ -223,8 +224,8 @@ func (l *local) Save() (string, error) {
 
 	formatted, err = json.Marshal([]map[string]interface{}{
 		{
-			"Config":   imgConfigID,
-			"RepoTags": []string{l.RepoName},
+			"Config":   imgID + ".json",
+			"RepoTags": []string{repoName},
 			"Layers":   layerPaths,
 		},
 	})
@@ -243,7 +244,7 @@ func (l *local) Save() (string, error) {
 	pw.Close()
 
 	err = <-done
-	return "TODO", err
+	return imgID, err
 }
 
 func (l *local) SaveOLD() (string, error) {
