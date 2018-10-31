@@ -186,11 +186,7 @@ func (l *local) Save() (string, error) {
 		return "", err
 	}
 	imgID := fmt.Sprintf("%x", sha256.Sum256(formatted))
-	hdr := &tar.Header{Name: imgID + ".json", Mode: 0644, Size: int64(len(formatted))}
-	if err := tw.WriteHeader(hdr); err != nil {
-		return "", err
-	}
-	if _, err := tw.Write(formatted); err != nil {
+	if err := l.FS.AddTextToTar(tw, imgID+".json", formatted); err != nil {
 		return "", err
 	}
 
@@ -200,21 +196,13 @@ func (l *local) Save() (string, error) {
 			layerPaths = append(layerPaths, "")
 			continue
 		}
+		layerName := fmt.Sprintf("/%x.tar", sha256.Sum256([]byte(path)))
 		f, err := os.Open(path)
 		if err != nil {
 			return "", err
 		}
 		defer f.Close()
-		fi, err := f.Stat()
-		if err != nil {
-			return "", err
-		}
-		layerName := fmt.Sprintf("/%x.tar", sha256.Sum256([]byte(path)))
-		hdr := &tar.Header{Name: layerName, Mode: 0644, Size: int64(fi.Size())}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return "", err
-		}
-		if _, err := io.Copy(tw, f); err != nil {
+		if err := l.FS.AddFileToTar(tw, layerName, f); err != nil {
 			return "", err
 		}
 		f.Close()
@@ -232,11 +220,7 @@ func (l *local) Save() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	hdr = &tar.Header{Name: "manifest.json", Mode: 0644, Size: int64(len(formatted))}
-	if err := tw.WriteHeader(hdr); err != nil {
-		return "", err
-	}
-	if _, err := tw.Write(formatted); err != nil {
+	if err := l.FS.AddTextToTar(tw, "manifest.json", formatted); err != nil {
 		return "", err
 	}
 
