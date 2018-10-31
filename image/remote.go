@@ -90,6 +90,10 @@ func (r *remote) TopLayer() (string, error) {
 	return hex.String(), nil
 }
 
+func (r *remote) AddLayer(path string) error {
+	panic("Not Implemented")
+}
+
 func (r *remote) Save() (string, error) {
 	repoStore, err := img.NewRegistry(r.RepoName)
 	if err != nil {
