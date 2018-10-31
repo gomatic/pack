@@ -231,40 +231,6 @@ func (l *local) Save() (string, error) {
 	return imgID, err
 }
 
-func (l *local) SaveOLD() (string, error) {
-	dockerFile := "FROM scratch\n"
-	if l.currentTempImage != "" {
-		dockerFile = fmt.Sprintf("FROM %s\n", l.currentTempImage)
-		defer func() {
-			l.Docker.ImageRemove(context.TODO(), l.currentTempImage, dockertypes.ImageRemoveOptions{})
-			l.currentTempImage = ""
-		}()
-	}
-	if l.Inspect.Config != nil {
-		for k, v := range l.Inspect.Config.Labels {
-			dockerFile += fmt.Sprintf("LABEL %s=%s\n", k, v)
-		}
-	}
-
-	r2, err := l.FS.CreateSingleFileTar("Dockerfile", dockerFile)
-	if err != nil {
-		return "", errors.Wrap(err, "image build")
-	}
-
-	res, err := l.Docker.ImageBuild(context.TODO(), r2, dockertypes.ImageBuildOptions{Tags: []string{l.RepoName}})
-	if err != nil {
-		return "", errors.Wrap(err, "image build")
-	}
-	defer res.Body.Close()
-	imageID, err := parseImageBuildBody(res.Body, l.Stdout)
-	if err != nil {
-		return "", errors.Wrap(err, "image build")
-	}
-	res.Body.Close()
-
-	return imageID, nil
-}
-
 // TODO copied from exporter.go
 func parseImageBuildBody(r io.Reader, out io.Writer) (string, error) {
 	jr := json.NewDecoder(r)
