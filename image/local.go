@@ -8,10 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/buildpack/lifecycle/img"
@@ -160,18 +160,15 @@ func (l *local) AddLayer(path string) error {
 
 func (l *local) Save() (string, error) {
 	ctx := context.Background()
-	var wg sync.WaitGroup
+	done := make(chan error)
 
 	pr, pw := io.Pipe()
 	go func() {
-		wg.Add(1)
-		defer wg.Done()
 		res, err := l.Docker.ImageLoad(ctx, pr, true)
 		if err != nil {
-			panic(err)
+			io.Copy(ioutil.Discard, res.Body)
 		}
-		// TODO ; NOT STDOUT
-		io.Copy(os.Stdout, res.Body)
+		done <- err
 	}()
 
 	tw := tar.NewWriter(pw)
@@ -183,7 +180,7 @@ func (l *local) Save() (string, error) {
 			"diff_ids": l.Inspect.RootFS.Layers,
 		},
 	}
-	formatted, err := json.MarshalIndent(imgConfig, "", "\t")
+	formatted, err := json.Marshal(imgConfig)
 	if err != nil {
 		return "", err
 	}
@@ -224,13 +221,13 @@ func (l *local) Save() (string, error) {
 
 	}
 
-	formatted, err = json.MarshalIndent([]map[string]interface{}{
+	formatted, err = json.Marshal([]map[string]interface{}{
 		{
 			"Config":   imgConfigID,
 			"RepoTags": []string{l.RepoName},
 			"Layers":   layerPaths,
 		},
-	}, "", "\t")
+	})
 	if err != nil {
 		return "", err
 	}
@@ -245,8 +242,8 @@ func (l *local) Save() (string, error) {
 	tw.Close()
 	pw.Close()
 
-	wg.Wait()
-	return "TODO", nil
+	err = <-done
+	return "TODO", err
 }
 
 func (l *local) SaveOLD() (string, error) {
