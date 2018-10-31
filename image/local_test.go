@@ -264,7 +264,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			h.AssertNil(t, err)
 		})
 
-		it.Focus("appends a layer", func() {
+		it("appends a layer", func() {
 			img, err := factory.NewLocal(repoName, false)
 			h.AssertNil(t, err)
 
