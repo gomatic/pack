@@ -84,38 +84,54 @@ func (l *local) Digest() (string, error) {
 }
 
 func (l *local) Rebase(baseTopLayer string, newBase Image) error {
-	repoStore, err := img.NewDaemon(l.RepoName)
-	if err != nil {
-		return errors.Wrap(err, "rebase")
+	newBaseInspect, _, err := f.Docker.ImageInspectWithRaw(context.Background(), newBase)
+	if err != nil && !dockercli.IsErrNotFound(err) {
+		return nil, errors.Wrap(err, "analyze read previous image config")
 	}
-	image, err := repoStore.Image()
-	if err != nil {
-		return errors.Wrap(err, "rebase")
-	}
+	l.Inspect.RootFS.Layers = newBaseInspect.RootFS.Layers
+	l.layerPaths = make([]string, len(.Inspect.RootFS.Layers))
 
-	newBaseStore, err := img.NewDaemon(newBase.Name())
-	if err != nil {
-		return errors.Wrap(err, "rebase")
-	}
-	newBaseImage, err := newBaseStore.Image()
-	if err != nil {
-		return errors.Wrap(err, "rebase")
-	}
+	//l.Inspect.RootFS.Layers = inspect.Layers
+	//l.Docker.SaveImage()
+	////exclude old base
+	//// for the other layers
+	//l.AddLayer()
 
-	oldBase := &subImage{img: image, topSHA: baseTopLayer}
-	image, err = mutate.Rebase(image, oldBase, newBaseImage, &mutate.RebaseOptions{})
-	if err != nil {
-		return errors.Wrap(err, "rebase")
-	}
+	//l.Inspect.RootFS.Layers = append(l.Inspect.RootFS.Layers, "sha256:"+sha)
+	//l.layerPaths = append(l.layerPaths, path)
 
-	l.currentTempImage = "pack-rebase-tmp-" + randString(8)
-	repoStore, err = img.NewDaemon(l.currentTempImage)
-	if err != nil {
-		return errors.Wrap(err, "rebase")
-	}
-	if err := repoStore.Write(image); err != nil {
-		return errors.Wrap(err, "rebase")
-	}
+	// repoStore, err := img.NewDaemon(l.RepoName)
+	// if err != nil {
+	// 	return errors.Wrap(err, "rebase")
+	// }
+	// image, err := repoStore.Image()
+	// if err != nil {
+	// 	return errors.Wrap(err, "rebase")
+	// }
+
+	// newBaseStore, err := img.NewDaemon(newBase.Name())
+	// if err != nil {
+	// 	return errors.Wrap(err, "rebase")
+	// }
+	// newBaseImage, err := newBaseStore.Image()
+	// if err != nil {
+	// 	return errors.Wrap(err, "rebase")
+	// }
+
+	// oldBase := &subImage{img: image, topSHA: baseTopLayer}
+	// image, err = mutate.Rebase(image, oldBase, newBaseImage, &mutate.RebaseOptions{})
+	// if err != nil {
+	// 	return errors.Wrap(err, "rebase")
+	// }
+
+	// l.currentTempImage = "pack-rebase-tmp-" + randString(8)
+	// repoStore, err = img.NewDaemon(l.currentTempImage)
+	// if err != nil {
+	// 	return errors.Wrap(err, "rebase")
+	// }
+	// if err := repoStore.Write(image); err != nil {
+	// 	return errors.Wrap(err, "rebase")
+	// }
 
 	return nil
 }
