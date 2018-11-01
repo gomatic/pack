@@ -2,15 +2,16 @@ package image
 
 import (
 	"context"
+	"io"
+	"log"
+	"os"
+
 	"github.com/buildpack/lifecycle/img"
 	"github.com/buildpack/pack/docker"
 	"github.com/buildpack/pack/fs"
 	"github.com/buildpack/packs"
 	"github.com/docker/docker/api/types"
 	"github.com/google/go-containerregistry/pkg/v1"
-	"io"
-	"log"
-	"os"
 )
 
 type Image interface {
@@ -30,6 +31,7 @@ type Docker interface {
 	ImageBuild(ctx context.Context, buildContext io.Reader, options types.ImageBuildOptions) (types.ImageBuildResponse, error)
 	ImageRemove(ctx context.Context, ref string, options types.ImageRemoveOptions) ([]types.ImageDeleteResponseItem, error)
 	ImageLoad(ctx context.Context, r io.Reader, quiet bool) (types.ImageLoadResponse, error)
+	ImageSave(ctx context.Context, imageIDs []string) (io.ReadCloser, error)
 }
 
 type Factory struct {

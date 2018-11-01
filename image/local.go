@@ -11,16 +11,14 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/buildpack/lifecycle/img"
 	"github.com/buildpack/pack/fs"
 	"github.com/docker/docker/api/types"
-	dockertypes "github.com/docker/docker/api/types"
 	dockercli "github.com/docker/docker/client"
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/pkg/errors"
 )
 
@@ -84,55 +82,72 @@ func (l *local) Digest() (string, error) {
 }
 
 func (l *local) Rebase(baseTopLayer string, newBase Image) error {
-	newBaseInspect, _, err := f.Docker.ImageInspectWithRaw(context.Background(), newBase)
-	if err != nil && !dockercli.IsErrNotFound(err) {
-		return nil, errors.Wrap(err, "analyze read previous image config")
+	ctx := context.Background()
+
+	// FIND TOP LAYER
+	keepLayers := -1
+	for i, diffID := range l.Inspect.RootFS.Layers {
+		if diffID == baseTopLayer {
+			keepLayers = len(l.Inspect.RootFS.Layers) - i - 1
+			break
+		}
+	}
+	if keepLayers == -1 {
+		return fmt.Errorf("'%s' not found in '%s' during rebase", baseTopLayer, l.RepoName)
+	}
+
+	// SWITCH BASE LAYERS
+	newBaseInspect, _, err := l.Docker.ImageInspectWithRaw(ctx, newBase.Name())
+	if err != nil {
+		return errors.Wrap(err, "analyze read previous image config")
 	}
 	l.Inspect.RootFS.Layers = newBaseInspect.RootFS.Layers
-	l.layerPaths = make([]string, len(.Inspect.RootFS.Layers))
+	l.layerPaths = make([]string, len(l.Inspect.RootFS.Layers))
 
-	//l.Inspect.RootFS.Layers = inspect.Layers
-	//l.Docker.SaveImage()
-	////exclude old base
-	//// for the other layers
-	//l.AddLayer()
+	// SAVE CURRENT IMAGE TO DISK
+	tmpDir, err := ioutil.TempDir("", "packs.local.rebase.")
+	if err != nil {
+		return errors.Wrap(err, "local rebase create temp dir")
+	}
+	defer os.RemoveAll(tmpDir)
 
-	//l.Inspect.RootFS.Layers = append(l.Inspect.RootFS.Layers, "sha256:"+sha)
-	//l.layerPaths = append(l.layerPaths, path)
+	rc, err := l.Docker.ImageSave(ctx, []string{l.RepoName})
+	if err != nil {
+		return errors.Wrap(err, "local rebase access old image")
+	}
+	defer rc.Close()
 
-	// repoStore, err := img.NewDaemon(l.RepoName)
-	// if err != nil {
-	// 	return errors.Wrap(err, "rebase")
-	// }
-	// image, err := repoStore.Image()
-	// if err != nil {
-	// 	return errors.Wrap(err, "rebase")
-	// }
+	if err := l.FS.Untar(rc, tmpDir); err != nil {
+		return errors.Wrap(err, "local rebase untar old image")
+	}
 
-	// newBaseStore, err := img.NewDaemon(newBase.Name())
-	// if err != nil {
-	// 	return errors.Wrap(err, "rebase")
-	// }
-	// newBaseImage, err := newBaseStore.Image()
-	// if err != nil {
-	// 	return errors.Wrap(err, "rebase")
-	// }
+	// READ MANIFEST.JSON
+	b, err := ioutil.ReadFile(filepath.Join(tmpDir, "manifest.json"))
+	if err != nil {
+		return err
+	}
+	var manifest []struct{ Layers []string }
+	if err := json.Unmarshal(b, &manifest); err != nil {
+		return err
+	}
+	if len(manifest) != 1 {
+		return fmt.Errorf("expected 1 image received %d", len(manifest))
+	}
+	fmt.Println("DG: LAYERS:", manifest[0].Layers)
 
-	// oldBase := &subImage{img: image, topSHA: baseTopLayer}
-	// image, err = mutate.Rebase(image, oldBase, newBaseImage, &mutate.RebaseOptions{})
-	// if err != nil {
-	// 	return errors.Wrap(err, "rebase")
-	// }
+	// ADD EXISTING LAYERS
+	for _, filename := range manifest[0].Layers[(len(manifest[0].Layers) - keepLayers):] {
+		if err := l.AddLayer(filepath.Join(tmpDir, filename)); err != nil {
+			return err
+		}
+	}
 
-	// l.currentTempImage = "pack-rebase-tmp-" + randString(8)
-	// repoStore, err = img.NewDaemon(l.currentTempImage)
-	// if err != nil {
-	// 	return errors.Wrap(err, "rebase")
-	// }
-	// if err := repoStore.Write(image); err != nil {
-	// 	return errors.Wrap(err, "rebase")
-	// }
-
+	if newImgID, err := l.Save(); err != nil {
+		return err
+	} else {
+		fmt.Println("DG: NEW IMAGE ID:", newImgID)
+	}
+	l.layerPaths = make([]string, len(l.Inspect.RootFS.Layers))
 	return nil
 }
 
