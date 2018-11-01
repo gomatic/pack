@@ -299,6 +299,37 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		})
 	})
 
+	when("#ReuseLayer", func() {
+		var layer2SHA string
+		it.Before(func() {
+			createImageOnLocal(t, repoName, `
+					FROM busybox
+					RUN echo -n old-layer-1 > layer-1.txt
+					RUN echo -n old-layer-2 > layer-2.txt
+				`)
+
+			layer2SHA = strings.TrimSpace(h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{index .RootFS.Layers 2}}")))
+		})
+
+		it("reuses a layer", func() {
+			img, err := factory.NewLocal("busybox", false)
+			h.AssertNil(t, err)
+
+			img.SetName(repoName)
+
+			err = img.ReuseLayer(layer2SHA)
+			h.AssertNil(t, err)
+
+			_, err = img.Save()
+			h.AssertNil(t, err)
+
+			output := h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", "/layer-2.txt"))
+			h.AssertEq(t, output, "old-layer-2")
+
+			// TODO confirm layer-1.txt does not exist
+		})
+	})
+
 	when("#Save", func() {
 		when("image exists", func() {
 			it("returns the image digest", func() {

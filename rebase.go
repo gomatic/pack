@@ -3,11 +3,11 @@ package pack
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/buildpack/lifecycle"
-	"github.com/buildpack/pack/image"
 	"log"
 
+	"github.com/buildpack/lifecycle"
 	"github.com/buildpack/pack/config"
+	"github.com/buildpack/pack/image"
 	"github.com/google/go-containerregistry/pkg/v1"
 )
 
@@ -98,7 +98,7 @@ func (f *RebaseFactory) Rebase(cfg RebaseConfig) error {
 		return err
 	}
 
-	digest, err := cfg.Image.Save()
+	digest, err := cfg.Image.Save(cfg.Image.Name())
 	if err != nil {
 		return err
 	}

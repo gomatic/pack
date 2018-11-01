@@ -16,12 +16,14 @@ import (
 
 type Image interface {
 	Label(string) (string, error)
+	SetName(name string)
 	Name() string
 	Digest() (string, error)
 	Rebase(string, Image) error
 	SetLabel(string, string) error
 	TopLayer() (string, error)
 	AddLayer(path string) error
+	ReuseLayer(sha string) error
 	Save() (string, error)
 }
 

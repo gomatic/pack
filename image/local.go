@@ -63,6 +63,10 @@ func (l *local) Label(key string) (string, error) {
 	return labels[key], nil
 }
 
+func (l *local) SetName(name string) {
+	l.RepoName = name
+}
+
 func (l *local) Name() string {
 	return l.RepoName
 }
@@ -178,6 +182,90 @@ func (l *local) AddLayer(path string) error {
 	l.layerPaths = append(l.layerPaths, path)
 
 	return nil
+}
+
+func (l *local) ReuseLayer(sha string) error {
+	ctx := context.Background()
+
+	t, err := name.NewTag(l.RepoName, name.WeakValidation)
+	if err != nil {
+		return err
+	}
+	repoName := t.String()
+
+	tarFile, err := l.Docker.ImageSave(ctx, []string{repoName})
+	if err != nil {
+		return err
+	}
+	defer tarFile.Close()
+
+	tmpDir, err := ioutil.TempDir("", "packs.local.reuse-layer.")
+	if err != nil {
+		return errors.Wrap(err, "local reuse-layer create temp dir")
+	}
+	// ... how do we delete the tempdir after saving?
+
+	err = l.FS.Untar(tarFile, tmpDir)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(filepath.Glob(tmpDir + "/*"))
+
+	// manifest.json,   ---> blarg12345.json
+
+	mf, err := os.Open(filepath.Join(tmpDir, "manifest.json"))
+	if err != nil {
+		return err
+	}
+	defer mf.Close()
+
+	var manifest []struct {
+		Config string
+		Layers []string
+	}
+	if err := json.NewDecoder(mf).Decode(&manifest); err != nil {
+		return err
+	}
+
+	if len(manifest) != 1 {
+		return fmt.Errorf("manifest.json had unexpected number of entries: %d", len(manifest))
+	}
+
+	df, err := os.Open(filepath.Join(tmpDir, manifest[0].Config))
+	if err != nil {
+		return err
+	}
+	defer df.Close()
+
+	var details struct {
+		RootFS struct {
+			DiffIDs []string `json:"diff_ids"`
+		} `json:"rootfs"`
+	}
+
+	if err = json.NewDecoder(df).Decode(&details); err != nil {
+		return err
+	}
+
+	if len(manifest[0].Layers) != len(details.RootFS.DiffIDs) {
+		return fmt.Errorf("layers and diff IDs do not match, there are %d layers and %d diffIDs", len(manifest[0].Layers), len(details.RootFS.DiffIDs))
+	}
+
+	layerMap := make(map[string]string, len(manifest[0].Layers))
+	for i, diffID := range details.RootFS.DiffIDs {
+		layerID := manifest[0].Layers[i]
+		layerMap[diffID] = layerID
+	}
+
+	fmt.Printf("LAYER MAP: %#v\n", layerMap)
+
+	reuseLayer, ok := layerMap[sha]
+	if !ok {
+		return fmt.Errorf("SHA %s was not found in %s", sha, l.RepoName)
+	}
+
+	return l.AddLayer(filepath.Join(tmpDir, reuseLayer))
 }
 
 func (l *local) Save() (string, error) {
