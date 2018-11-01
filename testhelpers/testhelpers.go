@@ -212,7 +212,6 @@ func RemoveImage(names ...string) error {
 			}
 			if err == nil && parentID != "" && contains(imgIDs, parentID) {
 				shortID := imgID[7:19]
-				fmt.Println("DG: ADD?:", shortID)
 				if !contains(imgIDs, shortID) {
 					imgIDs = append([]string{shortID}, imgIDs...)
 					foundChildren = true
@@ -233,7 +232,6 @@ func RemoveImage(names ...string) error {
 			if firstError == nil {
 				firstError = err
 			}
-			fmt.Println("DG:", imgID, err)
 		}
 	}
 	return firstError

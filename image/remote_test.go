@@ -12,13 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sclevine/spec"
-	"github.com/sclevine/spec/report"
-
 	"github.com/buildpack/pack/docker"
 	"github.com/buildpack/pack/fs"
 	"github.com/buildpack/pack/image"
 	h "github.com/buildpack/pack/testhelpers"
+	"github.com/sclevine/spec"
+	"github.com/sclevine/spec/report"
 )
 
 var registryPort string
@@ -186,7 +185,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 
 			it("switches the base", func() {
 				// Before
-				txt := h.Run(t, exec.Command("docker", "run", repoName, "cat", "base.txt"))
+				txt := h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", "base.txt"))
 				h.AssertEq(t, txt, "old-base\n")
 
 				// Run rebase
@@ -201,7 +200,7 @@ func testRemote(t *testing.T, when spec.G, it spec.S) {
 
 				// After
 				h.Run(t, exec.Command("docker", "pull", repoName))
-				txt = h.Run(t, exec.Command("docker", "run", repoName, "cat", "base.txt"))
+				txt = h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", "base.txt"))
 				h.AssertEq(t, txt, "new-base\n")
 			})
 		})
