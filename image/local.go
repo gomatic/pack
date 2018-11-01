@@ -312,7 +312,6 @@ func (l *local) prevDownload() error {
 			outerErr = errors.Wrap(err, "local reuse-layer create temp dir")
 			return
 		}
-		// ... how do we delete the tempdir after saving?
 
 		err = l.FS.Untar(tarFile, l.prevDir)
 		if err != nil {
