@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/buildpack/pack/fs"
@@ -30,6 +31,9 @@ type local struct {
 	Stdout           io.Writer
 	FS               *fs.FS
 	currentTempImage string
+	prevDir          string
+	prevMap          map[string]string
+	prevOnce         *sync.Once
 }
 
 func (f *Factory) NewLocal(repoName string, pull bool) (Image, error) {
@@ -52,6 +56,7 @@ func (f *Factory) NewLocal(repoName string, pull bool) (Image, error) {
 		layerPaths: make([]string, len(inspect.RootFS.Layers)),
 		Stdout:     f.Stdout,
 		FS:         f.FS,
+		prevOnce:   &sync.Once{},
 	}, nil
 }
 
@@ -185,87 +190,16 @@ func (l *local) AddLayer(path string) error {
 }
 
 func (l *local) ReuseLayer(sha string) error {
-	ctx := context.Background()
-
-	t, err := name.NewTag(l.RepoName, name.WeakValidation)
-	if err != nil {
-		return err
-	}
-	repoName := t.String()
-
-	tarFile, err := l.Docker.ImageSave(ctx, []string{repoName})
-	if err != nil {
-		return err
-	}
-	defer tarFile.Close()
-
-	tmpDir, err := ioutil.TempDir("", "packs.local.reuse-layer.")
-	if err != nil {
-		return errors.Wrap(err, "local reuse-layer create temp dir")
-	}
-	// ... how do we delete the tempdir after saving?
-
-	err = l.FS.Untar(tarFile, tmpDir)
-	if err != nil {
+	if err := l.prevDownload(); err != nil {
 		return err
 	}
 
-	fmt.Println(filepath.Glob(tmpDir + "/*"))
-
-	// manifest.json,   ---> blarg12345.json
-
-	mf, err := os.Open(filepath.Join(tmpDir, "manifest.json"))
-	if err != nil {
-		return err
-	}
-	defer mf.Close()
-
-	var manifest []struct {
-		Config string
-		Layers []string
-	}
-	if err := json.NewDecoder(mf).Decode(&manifest); err != nil {
-		return err
-	}
-
-	if len(manifest) != 1 {
-		return fmt.Errorf("manifest.json had unexpected number of entries: %d", len(manifest))
-	}
-
-	df, err := os.Open(filepath.Join(tmpDir, manifest[0].Config))
-	if err != nil {
-		return err
-	}
-	defer df.Close()
-
-	var details struct {
-		RootFS struct {
-			DiffIDs []string `json:"diff_ids"`
-		} `json:"rootfs"`
-	}
-
-	if err = json.NewDecoder(df).Decode(&details); err != nil {
-		return err
-	}
-
-	if len(manifest[0].Layers) != len(details.RootFS.DiffIDs) {
-		return fmt.Errorf("layers and diff IDs do not match, there are %d layers and %d diffIDs", len(manifest[0].Layers), len(details.RootFS.DiffIDs))
-	}
-
-	layerMap := make(map[string]string, len(manifest[0].Layers))
-	for i, diffID := range details.RootFS.DiffIDs {
-		layerID := manifest[0].Layers[i]
-		layerMap[diffID] = layerID
-	}
-
-	fmt.Printf("LAYER MAP: %#v\n", layerMap)
-
-	reuseLayer, ok := layerMap[sha]
+	reuseLayer, ok := l.prevMap[sha]
 	if !ok {
 		return fmt.Errorf("SHA %s was not found in %s", sha, l.RepoName)
 	}
 
-	return l.AddLayer(filepath.Join(tmpDir, reuseLayer))
+	return l.AddLayer(filepath.Join(l.prevDir, reuseLayer))
 }
 
 func (l *local) Save() (string, error) {
@@ -342,9 +276,101 @@ func (l *local) Save() (string, error) {
 
 	tw.Close()
 	pw.Close()
-
 	err = <-done
+
+	if l.prevDir != "" {
+		os.RemoveAll(l.prevDir)
+		l.prevDir = ""
+		l.prevMap = nil
+		l.prevOnce = &sync.Once{}
+	}
+
 	return imgID, err
+}
+
+func (l *local) prevDownload() error {
+	var outerErr error
+	l.prevOnce.Do(func() {
+		ctx := context.Background()
+
+		t, err := name.NewTag(l.RepoName, name.WeakValidation)
+		if err != nil {
+			outerErr = err
+			return
+		}
+		repoName := t.String()
+
+		tarFile, err := l.Docker.ImageSave(ctx, []string{repoName})
+		if err != nil {
+			outerErr = err
+			return
+		}
+		defer tarFile.Close()
+
+		l.prevDir, err = ioutil.TempDir("", "packs.local.reuse-layer.")
+		if err != nil {
+			outerErr = errors.Wrap(err, "local reuse-layer create temp dir")
+			return
+		}
+		// ... how do we delete the tempdir after saving?
+
+		err = l.FS.Untar(tarFile, l.prevDir)
+		if err != nil {
+			outerErr = err
+			return
+		}
+
+		mf, err := os.Open(filepath.Join(l.prevDir, "manifest.json"))
+		if err != nil {
+			outerErr = err
+			return
+		}
+		defer mf.Close()
+
+		var manifest []struct {
+			Config string
+			Layers []string
+		}
+		if err := json.NewDecoder(mf).Decode(&manifest); err != nil {
+			outerErr = err
+			return
+		}
+
+		if len(manifest) != 1 {
+			outerErr = fmt.Errorf("manifest.json had unexpected number of entries: %d", len(manifest))
+			return
+		}
+
+		df, err := os.Open(filepath.Join(l.prevDir, manifest[0].Config))
+		if err != nil {
+			outerErr = err
+			return
+		}
+		defer df.Close()
+
+		var details struct {
+			RootFS struct {
+				DiffIDs []string `json:"diff_ids"`
+			} `json:"rootfs"`
+		}
+
+		if err = json.NewDecoder(df).Decode(&details); err != nil {
+			outerErr = err
+			return
+		}
+
+		if len(manifest[0].Layers) != len(details.RootFS.DiffIDs) {
+			outerErr = fmt.Errorf("layers and diff IDs do not match, there are %d layers and %d diffIDs", len(manifest[0].Layers), len(details.RootFS.DiffIDs))
+			return
+		}
+
+		l.prevMap = make(map[string]string, len(manifest[0].Layers))
+		for i, diffID := range details.RootFS.DiffIDs {
+			layerID := manifest[0].Layers[i]
+			l.prevMap[diffID] = layerID
+		}
+	})
+	return outerErr
 }
 
 // TODO copied from exporter.go
