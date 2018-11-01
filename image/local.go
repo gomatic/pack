@@ -133,7 +133,6 @@ func (l *local) Rebase(baseTopLayer string, newBase Image) error {
 	if len(manifest) != 1 {
 		return fmt.Errorf("expected 1 image received %d", len(manifest))
 	}
-	fmt.Println("DG: LAYERS:", manifest[0].Layers)
 
 	// ADD EXISTING LAYERS
 	for _, filename := range manifest[0].Layers[(len(manifest[0].Layers) - keepLayers):] {
@@ -142,10 +141,8 @@ func (l *local) Rebase(baseTopLayer string, newBase Image) error {
 		}
 	}
 
-	if newImgID, err := l.Save(); err != nil {
+	if _, err = l.Save(); err != nil {
 		return err
-	} else {
-		fmt.Println("DG: NEW IMAGE ID:", newImgID)
 	}
 	l.layerPaths = make([]string, len(l.Inspect.RootFS.Layers))
 	return nil
