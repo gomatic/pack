@@ -32,7 +32,6 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 	var factory image.Factory
 	var buf bytes.Buffer
 	var repoName string
-	var reposToDelete []string
 
 	it.Before(func() {
 		docker, err := docker.New()
@@ -44,10 +43,9 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			FS:     &fs.FS{},
 		}
 		repoName = "pack-image-test-" + h.RandString(10)
-		reposToDelete = []string{repoName}
 	})
 	it.After(func() {
-		h.RemoveImage(reposToDelete...)
+		h.RemoveImage(repoName)
 	})
 
 	when("#Label", func() {
@@ -198,8 +196,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				origNumLayers = h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{len .RootFS.Layers}}"))
 			})
 			it.After(func() {
-				h.RemoveImage(oldBase, newBase)
-				reposToDelete = append(reposToDelete, oldBase, newBase)
+				h.RemoveImage(repoName, oldBase, newBase)
 			})
 
 			it("switches the base", func() {
