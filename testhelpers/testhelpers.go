@@ -108,7 +108,7 @@ func proxyDockerHostPort(port string) (string, error) {
 			go func(conn net.Conn) {
 				defer conn.Close()
 				var stderr bytes.Buffer
-				cmd := exec.Command("docker", "run", "--log-driver=none", "-i", "-a", "stdin", "-a", "stdout", "-a", "stderr", "--network=host", "alpine/socat", "-", "TCP:localhost:"+port)
+				cmd := exec.Command("docker", "run", "--rm", "--log-driver=none", "-i", "-a", "stdin", "-a", "stdout", "-a", "stderr", "--network=host", "alpine/socat", "-", "TCP:localhost:"+port)
 				cmd.Stdin = conn
 				cmd.Stdout = conn
 				cmd.Stderr = &stderr
@@ -168,7 +168,7 @@ func HttpGet(t *testing.T, url string) string {
 		AssertNil(t, err)
 		return string(b)
 	} else {
-		return Run(t, exec.Command("docker", "run", "--log-driver=none", "--entrypoint=", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url))
+		return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "--entrypoint=", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url))
 	}
 }
 
@@ -182,7 +182,7 @@ func CopyWorkspaceToDocker(t *testing.T, srcPath, destVolume string) {
 
 func ReadFromDocker(t *testing.T, volume, path string) string {
 	t.Helper()
-	return Run(t, exec.Command("docker", "run", "--log-driver=none", "-v", volume+":/workspace", "packs/samples", "cat", path))
+	return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "-v", volume+":/workspace", "packs/samples", "cat", path))
 }
 
 func ReplaceLocalDockerPortWithRemotePort(s string) string {
@@ -191,13 +191,49 @@ func ReplaceLocalDockerPortWithRemotePort(s string) string {
 
 func RemoveImage(names ...string) error {
 	var firstError error
+	var imgIDs []string
 	for _, name := range names {
 		if strings.HasPrefix(name, "localhost:") {
 			name = regexp.MustCompile(`localhost:\d+`).ReplaceAllString(name, "localhost:*")
 		}
-		_, err := RunE(exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' %s)`, name)))
+		ids, err := RunE(exec.Command("docker", "images", "--format={{.ID}}", name))
 		if firstError == nil {
 			firstError = err
+		}
+		imgIDs = append(imgIDs, trimEmpty(strings.Split(ids, "\n"))...)
+	}
+	for {
+		foundChildren := false
+		danglingIDs, _ := RunE(exec.Command("docker", "images", "-a", "--no-trunc", "-q"))
+		for _, imgID := range trimEmpty(strings.Split(danglingIDs, "\n")) {
+			parentID, err := RunE(exec.Command("docker", "inspect", "--format={{.Parent}}", imgID))
+			if strings.HasPrefix(parentID, "sha256:") && len(parentID) > 20 {
+				parentID = parentID[7:19]
+			}
+			if err == nil && parentID != "" && contains(imgIDs, parentID) {
+				shortID := imgID[7:19]
+				fmt.Println("DG: ADD?:", shortID)
+				if !contains(imgIDs, shortID) {
+					imgIDs = append([]string{shortID}, imgIDs...)
+					foundChildren = true
+				}
+			}
+		}
+		if !foundChildren {
+			break
+		}
+	}
+	for i := 0; i < 2; i++ {
+		for _, imgID := range imgIDs {
+			imgID = strings.TrimSpace(imgID)
+			if imgID == "" {
+				continue
+			}
+			_, err := RunE(exec.Command("docker", "rmi", "-f", imgID))
+			if firstError == nil {
+				firstError = err
+			}
+			fmt.Println("DG:", imgID, err)
 		}
 	}
 	return firstError
@@ -226,4 +262,23 @@ func RunE(cmd *exec.Cmd) (string, error) {
 	}
 
 	return string(output), nil
+}
+
+func contains(slice []string, val string) bool {
+	for _, s := range slice {
+		if s == val {
+			return true
+		}
+	}
+	return false
+}
+
+func trimEmpty(slice []string) []string {
+	out := make([]string, 0, len(slice))
+	for _, v := range slice {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }

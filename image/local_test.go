@@ -32,6 +32,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 	var factory image.Factory
 	var buf bytes.Buffer
 	var repoName string
+	var reposToDelete []string
 
 	it.Before(func() {
 		docker, err := docker.New()
@@ -43,10 +44,10 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			FS:     &fs.FS{},
 		}
 		repoName = "pack-image-test-" + h.RandString(10)
+		reposToDelete = []string{repoName}
 	})
 	it.After(func() {
-		// h.RemoveImage(repoName)
-		fmt.Println("REPONAME:", repoName)
+		h.RemoveImage(reposToDelete...)
 	})
 
 	when("#Label", func() {
@@ -191,18 +192,17 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 					RUN echo text-from-image > myimage.txt
 					RUN echo text-from-image > myimage2.txt
 				`, oldBase))
-				fmt.Println(h.Run(t, exec.Command("docker", "images")))
 
 				origNumLayers = h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{len .RootFS.Layers}}"))
 			})
 			it.After(func() {
-				// h.RemoveImage(oldBase, newBase)
-				fmt.Println("DG: BASE IMAGES:", oldBase, newBase)
+				h.RemoveImage(oldBase, newBase)
+				reposToDelete = append(reposToDelete, oldBase, newBase)
 			})
 
 			it("switches the base", func() {
 				// Before
-				txt := h.Run(t, exec.Command("docker", "run", repoName, "cat", "base.txt"))
+				txt := h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", "base.txt"))
 				h.AssertEq(t, txt, "old-base\n")
 
 				// Run rebase
@@ -221,7 +221,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 					"myimage2.txt":  "text-from-image\n",
 				}
 				for filename, expectedText := range expected {
-					actualText := h.Run(t, exec.Command("docker", "run", repoName, "cat", filename))
+					actualText := h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", filename))
 					h.AssertEq(t, actualText, expectedText)
 				}
 
@@ -231,8 +231,8 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 
 				// TODO : remove as unneccessary? or leave to show they don't blow up?
 				//        NOTE: I did move below the assertions about the saved image
-				// _, err = img.Save()
-				// h.AssertNil(t, err)
+				_, err = img.Save()
+				h.AssertNil(t, err)
 			})
 		})
 	})
@@ -292,10 +292,10 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			_, err = img.Save()
 			h.AssertNil(t, err)
 
-			output := h.Run(t, exec.Command("docker", "run", repoName, "cat", "/old-layer.txt"))
+			output := h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", "/old-layer.txt"))
 			h.AssertEq(t, output, "old-layer")
 
-			output = h.Run(t, exec.Command("docker", "run", repoName, "cat", "/new-layer.txt"))
+			output = h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", "/new-layer.txt"))
 			h.AssertEq(t, output, "new-layer")
 		})
 	})
