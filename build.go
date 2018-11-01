@@ -550,21 +550,52 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 			return err
 		}
 
-		i, err := imgFactory.NewLocal(b.RunImage, !b.NoPull)
+		img, err := imgFactory.NewLocal(b.RunImage, !b.NoPull)
 		if err != nil {
 			return err
 		}
-		if err := i.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(metadata.App.SHA, "sha256:")+".tar")); err != nil {
+		img.Rename(b.RepoName)
+		if err := img.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(metadata.App.SHA, "sha256:")+".tar")); err != nil {
 			return err
 		}
-		if err := i.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(metadata.Config.SHA, "sha256:")+".tar")); err != nil {
+		if err := img.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(metadata.Config.SHA, "sha256:")+".tar")); err != nil {
 			return err
 		}
-		for _, bp := range metadata.Buildpacks {
-			// TODO do alpha sort
-			for _, layer := range bp.Layers {
-				if err := i.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(layer.SHA, "sha256:")+".tar")); err != nil {
-					return err
+
+		var prevMetadata lifecycle.AppImageMetadata
+		if prevInspect, _, err := b.Cli.ImageInspectWithRaw(context.Background(), b.RepoName); err != nil {
+			// TODO handle rel error (eg. not prev image not exist)
+		} else {
+			label := prevInspect.Config.Labels[lifecycle.MetadataLabel]
+			if err := json.Unmarshal([]byte(label), &prevMetadata); err != nil {
+				return errors.Wrap(err, "parsing previous image metadata label")
+			}
+		}
+
+		// TODO do alpha sort
+		for index, bp := range metadata.Buildpacks {
+			var prevBP *lifecycle.BuildpackMetadata
+			for _, pbp := range prevMetadata.Buildpacks {
+				if pbp.ID == bp.ID {
+					prevBP = &pbp
+				}
+			}
+
+			for layerName, layer := range bp.Layers {
+				if layer.SHA == "" {
+					if prevBP == nil {
+						return fmt.Errorf("tried to use not exist previous buildpack: %s", bp.ID)
+					}
+					// TODO error nicely on not found
+					layer.SHA = prevBP.Layers[layerName].SHA
+					if err := img.ReuseLayer(layer.SHA); err != nil {
+						return err
+					}
+					metadata.Buildpacks[index].Layers[layerName] = layer
+				} else {
+					if err := img.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(layer.SHA, "sha256:")+".tar")); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -572,10 +603,10 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 		if err != nil {
 			return errors.Wrap(err, "write exporter metadata")
 		}
-		if err := i.SetLabel(lifecycle.MetadataLabel, string(bData)); err != nil {
+		if err := img.SetLabel(lifecycle.MetadataLabel, string(bData)); err != nil {
 			return errors.Wrap(err, "set image metadata label")
 		}
-		if _, err := i.Save(b.RepoName); err != nil {
+		if _, err := img.Save(); err != nil {
 			return errors.Wrap(err, "save image")
 		}
 

@@ -68,7 +68,7 @@ func (l *local) Label(key string) (string, error) {
 	return labels[key], nil
 }
 
-func (l *local) SetName(name string) {
+func (l *local) Rename(name string) {
 	l.RepoName = name
 }
 

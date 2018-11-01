@@ -16,7 +16,7 @@ import (
 
 type Image interface {
 	Label(string) (string, error)
-	SetName(name string)
+	Rename(name string)
 	Name() string
 	Digest() (string, error)
 	Rebase(string, Image) error
