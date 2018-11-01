@@ -33,6 +33,18 @@ func (m *MockImage) EXPECT() *MockImageMockRecorder {
 	return m.recorder
 }
 
+// AddLayer mocks base method
+func (m *MockImage) AddLayer(arg0 string) error {
+	ret := m.ctrl.Call(m, "AddLayer", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AddLayer indicates an expected call of AddLayer
+func (mr *MockImageMockRecorder) AddLayer(arg0 interface{}) *gomock.Call {
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddLayer", reflect.TypeOf((*MockImage)(nil).AddLayer), arg0)
+}
+
 // Digest mocks base method
 func (m *MockImage) Digest() (string, error) {
 	ret := m.ctrl.Call(m, "Digest")

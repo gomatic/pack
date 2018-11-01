@@ -11,7 +11,6 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -57,6 +56,7 @@ type BuildConfig struct {
 	RunImage   string
 	RepoName   string
 	Publish    bool
+	NoPull     bool
 	Buildpacks []string
 	// Above are copied from BuildFlags are set by init
 	Cli    Docker
@@ -122,6 +122,7 @@ func (bf *BuildFactory) BuildConfigFromFlags(f *BuildFlags) (*BuildConfig, error
 		AppDir:          appDir,
 		RepoName:        f.RepoName,
 		Publish:         f.Publish,
+		NoPull:          f.NoPull,
 		Buildpacks:      f.Buildpacks,
 		Cli:             bf.Cli,
 		Stdout:          bf.Stdout,
@@ -549,31 +550,67 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 		if err := json.Unmarshal(bData, &metadata); err != nil {
 			return errors.Wrap(err, "read exporter metadata")
 		}
-		fmt.Printf("DG: METADATA: %#v\n", metadata)
-		dockerFile := "FROM " + b.RunImage + "\n"
-		dockerFile += "ADD " + strings.TrimPrefix(metadata.App.SHA, "sha256:") + ".tar /\n"
-		dockerFile += "ADD " + strings.TrimPrefix(metadata.Config.SHA, "sha256:") + ".tar /\n"
+
+		// TODO: move to init
+		imgFactory, err := image.DefaultFactory()
+		if err != nil {
+			return err
+		}
+
+		i, err := imgFactory.NewLocal(b.RunImage, !b.NoPull)
+		if err != nil {
+			return err
+		}
+		if err := i.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(metadata.App.SHA, "sha256:")+".tar")); err != nil {
+			return err
+		}
+		if err := i.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(metadata.Config.SHA, "sha256:")+".tar")); err != nil {
+			return err
+		}
 		for _, bp := range metadata.Buildpacks {
 			// TODO do alpha sort
 			for _, layer := range bp.Layers {
-				dockerFile += "ADD " + strings.TrimPrefix(layer.SHA, "sha256:") + ".tar /\n"
+				if err := i.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(layer.SHA, "sha256:")+".tar")); err != nil {
+					return err
+				}
 			}
 		}
 		bData, err = json.Marshal(metadata)
 		if err != nil {
 			return errors.Wrap(err, "write exporter metadata")
 		}
-		dockerFile += "LABEL " + lifecycle.MetadataLabel + " '" + string(bData) + "'"
-		if err := ioutil.WriteFile(filepath.Join(tmpDir, "pack-exporter", "Dockerfile"), []byte(dockerFile), 0666); err != nil {
-			return errors.Wrap(err, "write exporter dockerfile")
+		if err := i.SetLabel(lifecycle.MetadataLabel, string(bData)); err != nil {
+			return errors.Wrap(err, "set image metadata label")
 		}
-		cmd := exec.Command("docker", "build", "-t", b.RepoName, ".")
-		cmd.Dir = filepath.Join(tmpDir, "pack-exporter")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return errors.Wrap(err, "exporter build image")
+		if _, err := i.Save(b.RepoName); err != nil {
+			return errors.Wrap(err, "save image")
 		}
+
+		// fmt.Printf("DG: METADATA: %#v\n", metadata)
+		// dockerFile := "FROM " + b.RunImage + "\n"
+		// dockerFile += "ADD " + strings.TrimPrefix(metadata.App.SHA, "sha256:") + ".tar /\n"
+		// dockerFile += "ADD " + strings.TrimPrefix(metadata.Config.SHA, "sha256:") + ".tar /\n"
+		// for _, bp := range metadata.Buildpacks {
+		// 	// TODO do alpha sort
+		// 	for _, layer := range bp.Layers {
+		// 		dockerFile += "ADD " + strings.TrimPrefix(layer.SHA, "sha256:") + ".tar /\n"
+		// 	}
+		// }
+		// bData, err = json.Marshal(metadata)
+		// if err != nil {
+		// 	return errors.Wrap(err, "write exporter metadata")
+		// }
+		// dockerFile += "LABEL " + lifecycle.MetadataLabel + " '" + string(bData) + "'"
+		// if err := ioutil.WriteFile(filepath.Join(tmpDir, "pack-exporter", "Dockerfile"), []byte(dockerFile), 0666); err != nil {
+		// 	return errors.Wrap(err, "write exporter dockerfile")
+		// }
+		// cmd := exec.Command("docker", "build", "-t", b.RepoName, ".")
+		// cmd.Dir = filepath.Join(tmpDir, "pack-exporter")
+		// cmd.Stdout = os.Stdout
+		// cmd.Stderr = os.Stderr
+		// if err := cmd.Run(); err != nil {
+		// 	return errors.Wrap(err, "exporter build image")
+		// }
 	}
 
 	// if b.Publish {
