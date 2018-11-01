@@ -41,7 +41,7 @@ func (r *remote) Label(key string) (string, error) {
 
 }
 
-func (r *remote) SetName(name string) {
+func (r *remote) Rename(name string) {
 	r.RepoName = name
 }
 

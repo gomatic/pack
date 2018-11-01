@@ -98,7 +98,7 @@ func (f *RebaseFactory) Rebase(cfg RebaseConfig) error {
 		return err
 	}
 
-	digest, err := cfg.Image.Save(cfg.Image.Name())
+	digest, err := cfg.Image.Save()
 	if err != nil {
 		return err
 	}
