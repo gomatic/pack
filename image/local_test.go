@@ -45,7 +45,8 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		repoName = "pack-image-test-" + h.RandString(10)
 	})
 	it.After(func() {
-		h.RemoveImage(repoName)
+		// h.RemoveImage(repoName)
+		fmt.Println("REPONAME:", repoName)
 	})
 
 	when("#Label", func() {
@@ -171,7 +172,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 
 	when("#Rebase", func() {
 		when("image exists", func() {
-			var oldBase, oldTopLayer, newBase string
+			var oldBase, oldTopLayer, newBase, origNumLayers string
 			it.Before(func() {
 				oldBase = "pack-oldbase-test-" + h.RandString(10)
 				oldTopLayer = createImageOnLocal(t, oldBase, `
@@ -192,9 +193,13 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 					RUN echo text-from-image > myimage.txt
 					RUN echo text-from-image > myimage2.txt
 				`, oldBase))
+				fmt.Println(h.Run(t, exec.Command("docker", "images")))
+
+				origNumLayers = h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{len .RootFS.Layers}}"))
 			})
 			it.After(func() {
-				h.RemoveImage(oldBase, newBase)
+				// h.RemoveImage(oldBase, newBase)
+				fmt.Println("DG: BASE IMAGES:", oldBase, newBase)
 			})
 
 			it("switches the base", func() {
@@ -209,12 +214,27 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				h.AssertNil(t, err)
 				err = img.Rebase(oldTopLayer, newBaseImg)
 				h.AssertNil(t, err)
-				_, err = img.Save()
-				h.AssertNil(t, err)
 
 				// After
-				txt = h.Run(t, exec.Command("docker", "run", repoName, "cat", "base.txt"))
-				h.AssertEq(t, txt, "new-base\n")
+				expected := map[string]string{
+					"base.txt":      "new-base\n",
+					"otherfile.txt": "text-new-base\n",
+					"myimage.txt":   "text-from-image\n",
+					"myimage2.txt":  "text-from-image\n",
+				}
+				for filename, expectedText := range expected {
+					actualText := h.Run(t, exec.Command("docker", "run", repoName, "cat", filename))
+					h.AssertEq(t, actualText, expectedText)
+				}
+
+				// Final Image should have same number of layers as initial image
+				numLayers := h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{len .RootFS.Layers}}"))
+				h.AssertEq(t, numLayers, origNumLayers)
+
+				// TODO : remove as unneccessary? or leave to show they don't blow up?
+				//        NOTE: I did move below the assertions about the saved image
+				// _, err = img.Save()
+				// h.AssertNil(t, err)
 			})
 		})
 	})
