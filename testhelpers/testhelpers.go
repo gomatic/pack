@@ -168,7 +168,7 @@ func HttpGet(t *testing.T, url string) string {
 		AssertNil(t, err)
 		return string(b)
 	} else {
-		return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "--entrypoint=", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url))
+		return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "--entrypoint=", "--network=host", "dgodd/packsamples", "wget", "-q", "-O", "-", url))
 	}
 }
 
@@ -176,13 +176,13 @@ func CopyWorkspaceToDocker(t *testing.T, srcPath, destVolume string) {
 	t.Helper()
 	ctrName := uuid.New().String()
 	defer exec.Command("docker", "rm", ctrName).Run()
-	Run(t, exec.Command("docker", "create", "--name", ctrName, "-v", destVolume+":/workspace", "packs/samples", "true"))
+	Run(t, exec.Command("docker", "create", "--name", ctrName, "-v", destVolume+":/workspace", "dgodd/packsamples", "true"))
 	Run(t, exec.Command("docker", "cp", srcPath+"/.", ctrName+":/workspace/"))
 }
 
 func ReadFromDocker(t *testing.T, volume, path string) string {
 	t.Helper()
-	return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "-v", volume+":/workspace", "packs/samples", "cat", path))
+	return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "-v", volume+":/workspace", "dgodd/packsamples", "cat", path))
 }
 
 func ReplaceLocalDockerPortWithRemotePort(s string) string {

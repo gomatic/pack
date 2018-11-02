@@ -35,7 +35,7 @@ import (
 func TestBuild(t *testing.T) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	h.AssertNil(t, exec.Command("docker", "pull", "packs/samples").Run())
+	h.AssertNil(t, exec.Command("docker", "pull", "dgodd/packsamples").Run())
 	h.AssertNil(t, exec.Command("docker", "pull", "packs/run").Run())
 	defer h.StopRegistry(t)
 
@@ -50,7 +50,7 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 		var err error
 		subject = &pack.BuildConfig{
 			AppDir:          "acceptance/testdata/node_app",
-			Builder:         "packs/samples",
+			Builder:         "dgodd/packsamples",
 			RunImage:        "packs/run",
 			RepoName:        "pack.build." + h.RandString(10),
 			Publish:         false,
@@ -625,10 +625,10 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 				})
 
 				it("sets owner of layer files to PACK_USER_ID:PACK_GROUP_ID", func() {
-					subject.Builder = "packs/samples-" + h.RandString(8)
+					subject.Builder = "dgodd/packsamples-" + h.RandString(8)
 					cmd := exec.Command("docker", "build", "-t", subject.Builder, "-")
 					cmd.Stdin = strings.NewReader(`
-						FROM packs/samples
+						FROM dgodd/packsamples
 						ENV PACK_USER_ID 1234
 						ENV PACK_GROUP_ID 5678
 					`)
@@ -640,10 +640,10 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 				})
 
 				it("errors if run image is missing PACK_USER_ID", func() {
-					subject.Builder = "packs/samples-" + h.RandString(8)
+					subject.Builder = "dgodd/packsamples-" + h.RandString(8)
 					cmd := exec.Command("docker", "build", "-t", subject.Builder, "-")
 					cmd.Stdin = strings.NewReader(`
-						FROM packs/samples
+						FROM dgodd/packsamples
 						ENV PACK_USER_ID ''
 						ENV PACK_GROUP_ID 5678
 					`)
@@ -666,7 +666,7 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 
 				t.Log("setup workspace to reuse layer")
 				buf.Reset()
-				h.Run(t, exec.Command("docker", "run", "--user=root", "-v", subject.WorkspaceVolume+":/workspace", "packs/samples", "rm", "-rf", "/workspace/io.buildpacks.samples.nodejs/mylayer"))
+				h.Run(t, exec.Command("docker", "run", "--user=root", "-v", subject.WorkspaceVolume+":/workspace", "dgodd/packsamples", "rm", "-rf", "/workspace/io.buildpacks.samples.nodejs/mylayer"))
 
 				t.Log("recreate image and h.Assert copying layer from previous image")
 				h.AssertNil(t, subject.Export(group))
