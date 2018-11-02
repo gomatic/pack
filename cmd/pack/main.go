@@ -8,13 +8,12 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/spf13/cobra"
-
 	"github.com/buildpack/pack"
 	"github.com/buildpack/pack/config"
 	"github.com/buildpack/pack/docker"
 	"github.com/buildpack/pack/fs"
 	"github.com/buildpack/pack/image"
+	"github.com/spf13/cobra"
 )
 
 var Version = "UNKNOWN"
@@ -89,7 +88,7 @@ func runCommand() *cobra.Command {
 		},
 	}
 	runCommand.Flags().StringVarP(&runFlags.AppDir, "path", "p", wd, "path to app dir")
-	runCommand.Flags().StringVar(&runFlags.Builder, "builder", "packs/samples", "builder")
+	runCommand.Flags().StringVar(&runFlags.Builder, "builder", "dgodd/packsamples", "builder")
 	runCommand.Flags().StringVar(&runFlags.RunImage, "run-image", "packs/run", "run image")
 	runCommand.Flags().StringVar(&runFlags.Port, "port", "", "comma separated ports to publish, defaults to ports exposed by the container")
 	return runCommand

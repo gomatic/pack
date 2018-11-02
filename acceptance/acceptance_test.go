@@ -63,6 +63,19 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 		packHome, err = ioutil.TempDir("", "buildpack.pack.home.")
 		h.AssertNil(t, err)
 		os.Setenv("PACK_HOME", packHome)
+
+		packTag := os.Getenv("PACK_TAG")
+		if packTag != "" {
+			h.AssertNil(t, ioutil.WriteFile(filepath.Join(packHome, "config.toml"), []byte(fmt.Sprintf(`
+				default-stack-id = "io.buildpacks.stacks.bionic"
+                default-builder = "packs/samples:%s"
+
+				[[stacks]]
+				  id = "io.buildpacks.stacks.bionic"
+				  build-images = ["packs/build:%s"]
+				  run-images = ["packs/run:%s"]
+			`, packTag, packTag, packTag)), 0666))
+		}
 	})
 	it.After(func() {
 		os.Unsetenv("PACK_HOME")
@@ -217,14 +230,8 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 				cmd.Stdin = strings.NewReader(fmt.Sprintf("FROM packs/run\nUSER root\nRUN echo %s > /contents1.txt\nRUN echo %s > /contents2.txt\nUSER pack\n", contents1, contents2))
 				h.Run(t, cmd)
 
-				h.AssertNil(t, ioutil.WriteFile(filepath.Join(packHome, "config.toml"), []byte(fmt.Sprintf(`
-				default-stack-id = "io.buildpacks.stacks.bionic"
-
-				[[stacks]]
-				  id = "io.buildpacks.stacks.bionic"
-				  build-images = ["packs/build"]
-				  run-images = ["%s"]
-			`, runImage)), 0666))
+				cmd = exec.Command(pack, "update-stack", "io.buildpacks.stacks.bionic", "--run-image", runImage)
+				h.Run(t, cmd)
 			}
 			rootContents1 = func() string {
 				h.Run(t, exec.Command("docker", "run", "--name="+containerName, "--rm=true", "-d", "-e", "PORT=8080", "-p", ":8080", repoName))
@@ -247,14 +254,14 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 			it("rebases", func() {
 				buildAndSetRunImage(runBefore, "contents-before-1", "contents-before-2")
 
-				cmd := exec.Command(pack, "build", repoName, "-p", "testdata/node_app/", "--no-pull") // , "--publish")
+				cmd := exec.Command(pack, "build", repoName, "-p", "testdata/node_app/", "--no-pull")
 				h.Run(t, cmd)
 
 				h.AssertEq(t, rootContents1(), "contents-before-1\n")
 
 				buildAndSetRunImage(runAfter, "contents-after-1", "contents-after-2")
 
-				cmd = exec.Command(pack, "rebase", repoName, "--no-pull") // , "--publish")
+				cmd = exec.Command(pack, "rebase", repoName, "--no-pull")
 				h.Run(t, cmd)
 
 				h.AssertEq(t, rootContents1(), "contents-after-1\n")
