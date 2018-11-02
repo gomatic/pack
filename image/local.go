@@ -34,6 +34,7 @@ type local struct {
 	prevDir          string
 	prevMap          map[string]string
 	prevOnce         *sync.Once
+	easyAddLayers    []string
 }
 
 func (f *Factory) NewLocal(repoName string, pull bool) (Image, error) {
@@ -69,6 +70,11 @@ func (l *local) Label(key string) (string, error) {
 }
 
 func (l *local) Rename(name string) {
+	l.easyAddLayers = nil
+	if inspect, _, err := l.Docker.ImageInspectWithRaw(ctx, name); err == nil {
+
+	}
+
 	l.RepoName = name
 }
 

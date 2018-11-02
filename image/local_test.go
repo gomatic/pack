@@ -300,7 +300,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 	})
 
 	when("#ReuseLayer", func() {
-		var layer2SHA string
+		var layer1SHA, layer2SHA string
 		it.Before(func() {
 			createImageOnLocal(t, repoName, `
 					FROM busybox
@@ -308,6 +308,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 					RUN echo -n old-layer-2 > layer-2.txt
 				`)
 
+			layer1SHA = strings.TrimSpace(h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{index .RootFS.Layers 1}}")))
 			layer2SHA = strings.TrimSpace(h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{index .RootFS.Layers 2}}")))
 		})
 
@@ -329,6 +330,26 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			// Confirm layer-1.txt does not exist
 			_, err = h.RunE(exec.Command("docker", "run", "--rm", repoName, "cat", "/layer-1.txt"))
 			h.AssertContains(t, err.Error(), "cat: can't open '/layer-1.txt': No such file or directory")
+		})
+
+		it("does not download the old image if layers are directly above (performance)", func() {
+			img, err := factory.NewLocal("busybox", false)
+			h.AssertNil(t, err)
+
+			img.Rename(repoName)
+
+			err = img.ReuseLayer(layer1SHA)
+			h.AssertNil(t, err)
+
+			_, err = img.Save()
+			h.AssertNil(t, err)
+
+			output := h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", "/layer-1.txt"))
+			h.AssertEq(t, output, "old-layer-1")
+
+			// Confirm layer-2.txt does not exist
+			_, err = h.RunE(exec.Command("docker", "run", "--rm", repoName, "cat", "/layer-2.txt"))
+			h.AssertContains(t, err.Error(), "cat: can't open '/layer-2.txt': No such file or directory")
 		})
 	})
 
