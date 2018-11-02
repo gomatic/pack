@@ -562,12 +562,6 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 			return err
 		}
 		img.Rename(b.RepoName)
-		if err := img.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(metadata.App.SHA, "sha256:")+".tar")); err != nil {
-			return err
-		}
-		if err := img.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(metadata.Config.SHA, "sha256:")+".tar")); err != nil {
-			return err
-		}
 
 		var prevMetadata lifecycle.AppImageMetadata
 		if prevInspect, _, err := b.Cli.ImageInspectWithRaw(context.Background(), b.RepoName); err != nil {
@@ -606,6 +600,14 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 				}
 			}
 		}
+
+		if err := img.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(metadata.App.SHA, "sha256:")+".tar")); err != nil {
+			return err
+		}
+		if err := img.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(metadata.Config.SHA, "sha256:")+".tar")); err != nil {
+			return err
+		}
+
 		bData, err = json.Marshal(metadata)
 		if err != nil {
 			return errors.Wrap(err, "write exporter metadata")
