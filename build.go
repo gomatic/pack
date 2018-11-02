@@ -618,32 +618,6 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 		if _, err := img.Save(); err != nil {
 			return errors.Wrap(err, "save image")
 		}
-
-		// fmt.Printf("DG: METADATA: %#v\n", metadata)
-		// dockerFile := "FROM " + b.RunImage + "\n"
-		// dockerFile += "ADD " + strings.TrimPrefix(metadata.App.SHA, "sha256:") + ".tar /\n"
-		// dockerFile += "ADD " + strings.TrimPrefix(metadata.Config.SHA, "sha256:") + ".tar /\n"
-		// for _, bp := range metadata.Buildpacks {
-		// 	// TODO do alpha sort
-		// 	for _, layer := range bp.Layers {
-		// 		dockerFile += "ADD " + strings.TrimPrefix(layer.SHA, "sha256:") + ".tar /\n"
-		// 	}
-		// }
-		// bData, err = json.Marshal(metadata)
-		// if err != nil {
-		// 	return errors.Wrap(err, "write exporter metadata")
-		// }
-		// dockerFile += "LABEL " + lifecycle.MetadataLabel + " '" + string(bData) + "'"
-		// if err := ioutil.WriteFile(filepath.Join(tmpDir, "pack-exporter", "Dockerfile"), []byte(dockerFile), 0666); err != nil {
-		// 	return errors.Wrap(err, "write exporter dockerfile")
-		// }
-		// cmd := exec.Command("docker", "build", "-t", b.RepoName, ".")
-		// cmd.Dir = filepath.Join(tmpDir, "pack-exporter")
-		// cmd.Stdout = os.Stdout
-		// cmd.Stderr = os.Stderr
-		// if err := cmd.Run(); err != nil {
-		// 	return errors.Wrap(err, "exporter build image")
-		// }
 	}
 
 	// if b.Publish {
