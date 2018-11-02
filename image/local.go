@@ -193,6 +193,7 @@ func (l *local) AddLayer(path string) error {
 
 	l.Inspect.RootFS.Layers = append(l.Inspect.RootFS.Layers, "sha256:"+sha)
 	l.layerPaths = append(l.layerPaths, path)
+	l.easyAddLayers = nil
 
 	return nil
 }
