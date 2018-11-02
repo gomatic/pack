@@ -71,8 +71,10 @@ func (l *local) Label(key string) (string, error) {
 
 func (l *local) Rename(name string) {
 	l.easyAddLayers = nil
-	if inspect, _, err := l.Docker.ImageInspectWithRaw(ctx, name); err == nil {
-
+	if inspect, _, err := l.Docker.ImageInspectWithRaw(context.TODO(), name); err == nil {
+		if len(inspect.RootFS.Layers) > len(l.Inspect.RootFS.Layers) {
+			l.easyAddLayers = inspect.RootFS.Layers[len(l.Inspect.RootFS.Layers):]
+		}
 	}
 
 	l.RepoName = name
@@ -196,6 +198,13 @@ func (l *local) AddLayer(path string) error {
 }
 
 func (l *local) ReuseLayer(sha string) error {
+	if len(l.easyAddLayers) > 0 && l.easyAddLayers[0] == sha {
+		l.Inspect.RootFS.Layers = append(l.Inspect.RootFS.Layers, sha)
+		l.layerPaths = append(l.layerPaths, "")
+		l.easyAddLayers = l.easyAddLayers[1:]
+		return nil
+	}
+
 	if err := l.prevDownload(); err != nil {
 		return err
 	}
