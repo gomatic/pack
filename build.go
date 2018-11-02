@@ -12,8 +12,10 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
@@ -458,6 +460,7 @@ func (b *BuildConfig) Build() error {
 }
 
 func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
+	start := time.Now()
 	ctx := context.Background()
 	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
 		Image: b.Builder,
@@ -493,8 +496,7 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 	if err != nil {
 		return errors.Wrap(err, "tmpdir for exporter")
 	}
-	// defer os.RemoveAll(tmpDir)
-	defer fmt.Println("TMPDIR:", tmpDir)
+	defer os.RemoveAll(tmpDir)
 
 	if err := b.FS.Untar(r, tmpDir); err != nil {
 		return errors.Wrap(err, "untar from exporter container")
@@ -575,7 +577,14 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 				}
 			}
 
-			for layerName, layer := range bp.Layers {
+			layerKeys := make([]string, 0, len(bp.Layers))
+			for n, _ := range bp.Layers {
+				layerKeys = append(layerKeys, n)
+			}
+			sort.Strings(layerKeys)
+
+			for _, layerName := range layerKeys {
+				layer := bp.Layers[layerName]
 				if layer.SHA == "" {
 					if prevBP == nil {
 						return fmt.Errorf("tried to use not exist previous buildpack: %s", bp.ID)
@@ -636,6 +645,7 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 	// 	}
 	// }
 
+	fmt.Println("EXPORT TIMING:", time.Since(start))
 	return nil
 }
 
