@@ -559,7 +559,7 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 			return err
 		}
 
-		img, err := imgFactory.NewLocal(b.RunImage, !b.NoPull)
+		img, err := imgFactory.NewLocal(b.RunImage, false)
 		if err != nil {
 			return err
 		}
