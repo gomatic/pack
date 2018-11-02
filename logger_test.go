@@ -35,7 +35,7 @@ func testLogger(t *testing.T, when spec.G, it spec.S) {
 			it("shows verbose output", func() {
 				logger.Debug("Some verbose output")
 
-				h.AssertContains(t, outBuf.String(), "Some verbose output")
+				h.AssertEq(t, outBuf.String(), "Some verbose output\n")
 			})
 		})
 
@@ -88,7 +88,7 @@ func testLogger(t *testing.T, when spec.G, it spec.S) {
 			it("displays unstyled info message", func() {
 				logger.Info("This is some info")
 
-				h.AssertContains(t, outBuf.String(), "This is some info")
+				h.AssertEq(t, outBuf.String(), "This is some info\n")
 			})
 		})
 
@@ -97,7 +97,7 @@ func testLogger(t *testing.T, when spec.G, it spec.S) {
 				logger.Error("Something went wrong!")
 
 				expectedColor := color.New(color.FgRed, color.Bold).SprintFunc()
-				h.AssertContains(t, errBuff.String(), expectedColor("ERROR: ")+"Something went wrong!")
+				h.AssertEq(t, errBuff.String(), expectedColor("ERROR: ")+"Something went wrong!\n")
 			})
 		})
 
@@ -106,7 +106,7 @@ func testLogger(t *testing.T, when spec.G, it spec.S) {
 				logger.Tip("This is a tip")
 
 				expectedColor := color.New(color.FgHiGreen, color.Bold).SprintFunc()
-				h.AssertContains(t, outBuf.String(), expectedColor("Tip: ")+"This is a tip")
+				h.AssertEq(t, outBuf.String(), expectedColor("Tip: ")+"This is a tip\n")
 			})
 		})
 	})
