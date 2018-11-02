@@ -2,7 +2,7 @@ module github.com/buildpack/pack
 
 require (
 	github.com/BurntSushi/toml v0.3.1
-	github.com/buildpack/lifecycle v0.0.0-20181025145258-a42887a7d29f
+	github.com/buildpack/lifecycle v0.0.0-20181025145258-50ec6a1d00c1686b983928be55851938f7190f72
 	github.com/buildpack/packs v0.0.0-20180824001031-aa30a412923763df37e83f14a6e4e0fe07e11f25
 	github.com/docker/docker v0.7.3-0.20181027010111-b8e87cfdad8d
 	github.com/docker/go-connections v0.4.0
@@ -20,4 +20,4 @@ require (
 
 replace github.com/google/go-containerregistry v0.0.0-20181023232207-eb57122f1bf9 => github.com/dgodd/go-containerregistry v0.0.0-20180912122137-611aad063148a69435dccd3cf8475262c11814f6
 
-replace github.com/buildpack/lifecycle v0.0.0-20181025145258-a42887a7d29f => ../lifecycle
+replace github.com/buildpack/lifecycle v0.0.0-20181025145258-50ec6a1d00c1686b983928be55851938f7190f72 => ../lifecycle

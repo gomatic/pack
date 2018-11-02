@@ -563,6 +563,20 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 		if err != nil {
 			return err
 		}
+
+		runImageTopLayer, err := img.TopLayer()
+		if err != nil {
+			return err
+		}
+		runImageDigest, err := img.Digest()
+		if err != nil {
+			return err
+		}
+		metadata.RunImage = lifecycle.RunImageMetadata{
+			TopLayer: runImageTopLayer,
+			SHA:      runImageDigest,
+		}
+
 		img.Rename(b.RepoName)
 
 		var prevMetadata lifecycle.AppImageMetadata
