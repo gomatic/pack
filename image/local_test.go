@@ -315,7 +315,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			img, err := factory.NewLocal("busybox", false)
 			h.AssertNil(t, err)
 
-			img.SetName(repoName)
+			img.Rename(repoName)
 
 			err = img.ReuseLayer(layer2SHA)
 			h.AssertNil(t, err)
@@ -326,7 +326,9 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			output := h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", "/layer-2.txt"))
 			h.AssertEq(t, output, "old-layer-2")
 
-			// TODO confirm layer-1.txt does not exist
+			// Confirm layer-1.txt does not exist
+			_, err = h.RunE(exec.Command("docker", "run", "--rm", repoName, "cat", "/layer-1.txt"))
+			h.AssertContains(t, err.Error(), "cat: can't open '/layer-1.txt': No such file or directory")
 		})
 	})
 
