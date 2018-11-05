@@ -95,6 +95,28 @@ func (mr *MockImageMockRecorder) Rebase(arg0, arg1 interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rebase", reflect.TypeOf((*MockImage)(nil).Rebase), arg0, arg1)
 }
 
+// Rename mocks base method
+func (m *MockImage) Rename(arg0 string) {
+	m.ctrl.Call(m, "Rename", arg0)
+}
+
+// Rename indicates an expected call of Rename
+func (mr *MockImageMockRecorder) Rename(arg0 interface{}) *gomock.Call {
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rename", reflect.TypeOf((*MockImage)(nil).Rename), arg0)
+}
+
+// ReuseLayer mocks base method
+func (m *MockImage) ReuseLayer(arg0 string) error {
+	ret := m.ctrl.Call(m, "ReuseLayer", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReuseLayer indicates an expected call of ReuseLayer
+func (mr *MockImageMockRecorder) ReuseLayer(arg0 interface{}) *gomock.Call {
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReuseLayer", reflect.TypeOf((*MockImage)(nil).ReuseLayer), arg0)
+}
+
 // Save mocks base method
 func (m *MockImage) Save() (string, error) {
 	ret := m.ctrl.Call(m, "Save")
