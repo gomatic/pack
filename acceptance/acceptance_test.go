@@ -23,6 +23,8 @@ import (
 
 var pack string
 var dockerCli *docker.Client
+var registryPort string
+var packTag string
 
 func TestPack(t *testing.T) {
 	rand.Seed(time.Now().UTC().UnixNano())
@@ -46,7 +48,25 @@ func TestPack(t *testing.T) {
 	h.AssertNil(t, err)
 	h.AssertNil(t, dockerCli.PullImage("sclevine/test"))
 	h.AssertNil(t, dockerCli.PullImage("packs/samples"))
+	registryPort = h.RunRegistry(t)
 	defer h.StopRegistry(t)
+	packTag = os.Getenv("PACK_TAG")
+	if packTag == "" {
+		packTag = "latest"
+	}
+	for _, image := range []string{"build", "run", "samples"} {
+		h.Run(t, exec.Command(
+			"docker",
+			"tag",
+			fmt.Sprintf("packs/%s:%s", image, packTag),
+			fmt.Sprintf("localhost:%s/packs/%s:%s", registryPort, image, packTag),
+		))
+		h.Run(t, exec.Command(
+			"docker",
+			"push",
+			fmt.Sprintf("localhost:%s/packs/%s:%s", registryPort, image, packTag),
+		))
+	}
 
 	spec.Run(t, "pack", testPack, spec.Report(report.Terminal{}))
 }
@@ -64,17 +84,18 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 		h.AssertNil(t, err)
 		os.Setenv("PACK_HOME", packHome)
 
-		packTag := os.Getenv("PACK_TAG")
 		if packTag != "" {
 			h.AssertNil(t, ioutil.WriteFile(filepath.Join(packHome, "config.toml"), []byte(fmt.Sprintf(`
 				default-stack-id = "io.buildpacks.stacks.bionic"
-                default-builder = "packs/samples:%s"
+                default-builder = "localhost:%s/packs/samples:%s"
 
 				[[stacks]]
 				  id = "io.buildpacks.stacks.bionic"
-				  build-images = ["packs/build:%s"]
-				  run-images = ["packs/run:%s"]
-			`, packTag, packTag, packTag)), 0666))
+				  build-images = ["localhost:%s/packs/build:%s"]
+				  run-images = ["localhost:%s/packs/run:%s"]
+			`, registryPort, packTag, registryPort, packTag, registryPort, packTag)), 0666))
+		} else {
+			h.AssertNil(t, dockerCli.PullImage("packs/samples"))
 		}
 	})
 	it.After(func() {
@@ -96,10 +117,9 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 	}, spec.Parallel(), spec.Report(report.Terminal{}))
 
 	when("pack build", func() {
-		var sourceCodePath, repo, repoName, containerName, registryPort string
+		var sourceCodePath, repo, repoName, containerName string
 
 		it.Before(func() {
-			registryPort = h.RunRegistry(t)
 			repo = "some-org/" + h.RandString(10)
 			repoName = "localhost:" + registryPort + "/" + repo
 			containerName = "test-" + h.RandString(10)
@@ -177,13 +197,14 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 		})
 
 		when("'--publish' flag is specified", func() {
-			it("builds and exports an image", func() {
+			it.Focus("builds and exports an image", func() {
 				runPackBuild := func() string {
 					t.Helper()
 					cmd := exec.Command(pack, "build", repoName, "-p", sourceCodePath, "--publish")
 					return h.Run(t, cmd)
 				}
 				output := runPackBuild()
+				fmt.Println(output)
 				imgSHA, err := imgSHAFromOutput(output, repoName)
 				if err != nil {
 					fmt.Println(output)
@@ -269,10 +290,7 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 		})
 
 		when("run on registry", func() {
-			var registryPort string
 			it.Before(func() {
-				registryPort = h.RunRegistry(t)
-
 				repoName = "localhost:" + registryPort + "/" + repoName
 				runBefore = "localhost:" + registryPort + "/" + runBefore
 				runAfter = "localhost:" + registryPort + "/" + runAfter

@@ -290,7 +290,7 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 		})
 	})
 
-	when("#Detect", func() {
+	when.Focus("#Detect", func() {
 		it("copies the app in to docker and chowns it (including directories)", func() {
 			_, err := subject.Detect()
 			h.AssertNil(t, err)

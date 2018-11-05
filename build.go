@@ -145,7 +145,7 @@ func (bf *BuildFactory) BuildConfigFromFlags(f *BuildFlags) (*BuildConfig, error
 		b.Builder = f.Builder
 	}
 	if !f.NoPull {
-		bf.Log.Printf("Pulling builder image '%s' (use --no-pull flag to skip this step)", f.Builder)
+		bf.Log.Printf("Pulling builder image '%s' (use --no-pull flag to skip this step)", b.Builder)
 		if err := bf.Cli.PullImage(b.Builder); err != nil {
 			return nil, err
 		}
@@ -339,7 +339,8 @@ func (b *BuildConfig) Detect() (*lifecycle.BuildpackGroup, error) {
 	}
 
 	tr, errChan := b.FS.CreateTarReader(b.AppDir, filepath.Join(launchDir, "app"), uid, gid)
-	if err := b.Cli.CopyToContainer(ctx, ctr.ID, "/", tr, dockertypes.CopyToContainerOptions{}); err != nil {
+	if err := b.Cli.CopyToContainer(ctx, ctr.ID, "/", tr, dockertypes.CopyToContainerOptions{
+	}); err != nil {
 		return nil, errors.Wrap(err, "copy app to workspace volume")
 	}
 	if err := <-errChan; err != nil {
@@ -509,6 +510,7 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 		return errors.Wrap(err, "untar from exporter container")
 	}
 
+	var imgSHA string
 	if b.Publish {
 		runImageStore, err := img.NewRegistry(b.RunImage)
 		if err != nil {
@@ -526,14 +528,14 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 			// UID:        uid,
 			// GID:        gid,
 		}
-		newImage, err := exporter.Stage2(
+		newImage, err := exporter.ExportImage(
 			filepath.Join(tmpDir, "pack-exporter"),
 			launchDir,
 			runImage,
 			nil, // origImage,
 		)
 		if err != nil {
-			return errors.Wrap(err, "stage2")
+			return errors.Wrap(err, "exoprt to registry")
 		}
 		repoStore, err := img.NewRegistry(b.RepoName)
 		if err != nil {
@@ -638,35 +640,13 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 		if err := img.SetLabel(lifecycle.MetadataLabel, string(bData)); err != nil {
 			return errors.Wrap(err, "set image metadata label")
 		}
-		if _, err := img.Save(); err != nil {
+		if imgSHA, err = img.Save(); err != nil {
 			return errors.Wrap(err, "save image")
 		}
 	}
 
-	// if b.Publish {
-	// 	localWorkspaceDir, cleanup, err := b.exportVolume(b.Builder, b.WorkspaceVolume)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	defer cleanup()
-
-	// 	imgSHA, err := exportRegistry(group, uid, gid, localWorkspaceDir, b.RepoName, b.RunImage, b.Stdout, b.Stderr)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	b.Log.Printf("\n*** Image: %s@%s\n", b.RepoName, imgSHA)
-	// } else {
-	// 	var buildpacks []string
-	// 	for _, b := range group.Buildpacks {
-	// 		buildpacks = append(buildpacks, b.ID)
-	// 	}
-
-	// 	if err := exportDaemon(b.Cli, buildpacks, b.WorkspaceVolume, b.RepoName, b.RunImage, b.Stdout, uid, gid); err != nil {
-	// 		return err
-	// 	}
-	// }
-
 	fmt.Println("EXPORT TIMING:", time.Since(start))
+	b.Log.Printf("\n*** Image: %s@%s\n", b.RepoName, imgSHA)
 	return nil
 }
 
