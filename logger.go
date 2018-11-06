@@ -1,7 +1,7 @@
 package pack
 
 import (
-	"github.com/fatih/color"
+	"github.com/buildpack/pack/style"
 	"io"
 	"log"
 )
@@ -19,7 +19,7 @@ func NewLogger(stdout, stderr io.Writer, debug, timestamps bool) *Logger {
 
 	if timestamps {
 		flags = log.LstdFlags
-		prefix = color.HiCyanString("| ")
+		prefix = style.Separator("| ")
 	}
 
 	return &Logger{
@@ -43,8 +43,7 @@ func (l *Logger) Info(format string, a ...interface{}) {
 }
 
 func (l *Logger) Error(format string, a ...interface{}) {
-	errorColor := color.New(color.FgRed, color.Bold).SprintFunc()
-	l.printf(l.err, true, errorColor("ERROR: ")+format, a...)
+	l.printf(l.err, true, style.Tip("ERROR: ")+format, a...)
 }
 
 func (l *Logger) Debug(format string, a ...interface{}) {
@@ -54,6 +53,5 @@ func (l *Logger) Debug(format string, a ...interface{}) {
 }
 
 func (l *Logger) Tip(format string, a ...interface{}) {
-	tipColor := color.New(color.FgHiGreen, color.Bold).SprintFunc()
-	l.printf(l.out, true, tipColor("Tip: ")+format, a...)
+	l.printf(l.out, true, style.Tip("Tip: ")+format, a...)
 }

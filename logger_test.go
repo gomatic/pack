@@ -2,6 +2,7 @@ package pack_test
 
 import (
 	"bytes"
+	"github.com/buildpack/pack/style"
 	"regexp"
 	"testing"
 
@@ -62,7 +63,7 @@ func testLogger(t *testing.T, when spec.G, it spec.S) {
 				logger.Info("Some text")
 
 				h.AssertMatch(t, outBuf.String(), regexp.MustCompile(
-					`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} \Q`+color.HiCyanString("| ")+`\ESome text`))
+					`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} \Q`+style.Separator("| ")+`\ESome text`))
 			})
 		})
 
@@ -96,8 +97,7 @@ func testLogger(t *testing.T, when spec.G, it spec.S) {
 			it("displays styled error message to error buffer", func() {
 				logger.Error("Something went wrong!")
 
-				expectedColor := color.New(color.FgRed, color.Bold).SprintFunc()
-				h.AssertEq(t, errBuff.String(), expectedColor("ERROR: ")+"Something went wrong!\n")
+				h.AssertEq(t, errBuff.String(), style.Error("ERROR: ")+"Something went wrong!\n")
 			})
 		})
 
@@ -105,8 +105,7 @@ func testLogger(t *testing.T, when spec.G, it spec.S) {
 			it("displays styled tip message", func() {
 				logger.Tip("This is a tip")
 
-				expectedColor := color.New(color.FgHiGreen, color.Bold).SprintFunc()
-				h.AssertEq(t, outBuf.String(), expectedColor("Tip: ")+"This is a tip\n")
+				h.AssertEq(t, outBuf.String(), style.Tip("Tip: ")+"This is a tip\n")
 			})
 		})
 	})

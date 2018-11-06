@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/buildpack/pack/style"
 	"log"
 	"os"
 	"os/signal"
@@ -42,9 +43,10 @@ func main() {
 
 func buildCommand() *cobra.Command {
 	var buildFlags pack.BuildFlags
-	buildCommand := &cobra.Command{
-		Use:  "build <image-name>",
-		Args: cobra.MinimumNArgs(1),
+	cmd := &cobra.Command{
+		Use:   fmt.Sprintf("build %s", style.Help("<image-name>")),
+		Args:  cobra.ExactArgs(1),
+		Short: style.Help("Generate app image from source code"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			buildFlags.RepoName = args[0]
@@ -59,22 +61,24 @@ func buildCommand() *cobra.Command {
 			return b.Run()
 		},
 	}
-	buildCommand.Flags().StringVarP(&buildFlags.AppDir, "path", "p", "current working directory", "path to app dir")
-	buildCommand.Flags().StringVar(&buildFlags.Builder, "builder", "packs/samples", "builder")
-	buildCommand.Flags().StringVar(&buildFlags.RunImage, "run-image", "", "run image")
-	buildCommand.Flags().BoolVar(&buildFlags.Publish, "publish", false, "publish to registry")
-	buildCommand.Flags().BoolVar(&buildFlags.NoPull, "no-pull", false, "don't pull images before use")
-	buildCommand.Flags().StringArrayVar(&buildFlags.Buildpacks, "buildpack", []string{}, "buildpack ID or host directory path, \n\t\t repeat for each buildpack in order")
-	return buildCommand
+	cmd.Flags().StringVarP(&buildFlags.AppDir, "path", "p", "current working directory", style.Help("Path to app dir"))
+	cmd.Flags().StringVar(&buildFlags.Builder, "builder", "packs/samples", style.Help("Builder"))
+	cmd.Flags().StringVar(&buildFlags.RunImage, "run-image", "default stack run image", style.Help("Run image"))
+	cmd.Flags().BoolVar(&buildFlags.Publish, "publish", false, style.Help("Publish to registry"))
+	cmd.Flags().BoolVar(&buildFlags.NoPull, "no-pull", false, style.Help("Skip pulling images before use"))
+	cmd.Flags().StringArrayVar(&buildFlags.Buildpacks, "buildpack", []string{}, style.Help("Buildpack ID or host directory path, \nrepeat for each buildpack in order"))
+	cmd.Flags().BoolP("help", "h", false, style.Help("Help for build"))
+	return cmd
 }
 
 func runCommand() *cobra.Command {
 	wd, _ := os.Getwd()
 
 	var runFlags pack.RunFlags
-	runCommand := &cobra.Command{
-		Use:  "run",
-		Args: cobra.NoArgs,
+	cmd := &cobra.Command{
+		Use:   "run",
+		Args:  cobra.NoArgs,
+		Short: style.Help("Build and run app image (recommended for development only)"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			bf, err := pack.DefaultBuildFactory()
 			if err != nil {
@@ -88,18 +92,20 @@ func runCommand() *cobra.Command {
 			return r.Run(makeStopChannelForSignals)
 		},
 	}
-	runCommand.Flags().StringVarP(&runFlags.AppDir, "path", "p", wd, "path to app dir")
-	runCommand.Flags().StringVar(&runFlags.Builder, "builder", "packs/samples", "builder")
-	runCommand.Flags().StringVar(&runFlags.RunImage, "run-image", "packs/run", "run image")
-	runCommand.Flags().StringVar(&runFlags.Port, "port", "", "comma separated ports to publish, defaults to ports exposed by the container")
-	return runCommand
+	cmd.Flags().StringVarP(&runFlags.AppDir, "path", "p", wd, style.Help("Path to app directory"))
+	cmd.Flags().StringVar(&runFlags.Builder, "builder", "packs/samples", style.Help("Builder"))
+	cmd.Flags().StringVar(&runFlags.RunImage, "run-image", "default stack run image", style.Help("Run image"))
+	cmd.Flags().StringVar(&runFlags.Port, "port", "ports exposed by container", style.Help("Comma separated ports to publish"))
+	cmd.Flags().BoolP("help", "h", false, style.Help("Help for run"))
+	return cmd
 }
 
 func rebaseCommand() *cobra.Command {
 	var flags pack.RebaseFlags
 	cmd := &cobra.Command{
-		Use:  "rebase <image-name>",
-		Args: cobra.ExactArgs(1),
+		Use:   fmt.Sprintf("rebase %s", style.Help("<image-name>")),
+		Args:  cobra.ExactArgs(1),
+		Short: style.Help("Rebase app image with latest run image"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			flags.RepoName = args[0]
@@ -124,16 +130,18 @@ func rebaseCommand() *cobra.Command {
 			return factory.Rebase(rebaseConfig)
 		},
 	}
-	cmd.Flags().BoolVar(&flags.Publish, "publish", false, "publish to registry")
-	cmd.Flags().BoolVar(&flags.NoPull, "no-pull", false, "don't pull images before use")
+	cmd.Flags().BoolVar(&flags.Publish, "publish", false, style.Help("Publish to registry"))
+	cmd.Flags().BoolVar(&flags.NoPull, "no-pull", false, style.Help("Skip pulling images before use"))
+	cmd.Flags().BoolP("help", "h", false, style.Help("Help for rebase"))
 	return cmd
 }
 
 func createBuilderCommand() *cobra.Command {
 	flags := pack.CreateBuilderFlags{}
-	createBuilderCommand := &cobra.Command{
-		Use:  "create-builder <image-name> -b <path-to-builder-toml>",
-		Args: cobra.MinimumNArgs(1),
+	cmd := &cobra.Command{
+		Use:   fmt.Sprintf("create-builder %s -b %s", style.Help("<image-name>"), style.Help("<builder-toml-path>")),
+		Args:  cobra.ExactArgs(1),
+		Short: style.Help("Create builder image"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			flags.RepoName = args[0]
@@ -160,11 +168,12 @@ func createBuilderCommand() *cobra.Command {
 			return builderFactory.Create(builderConfig)
 		},
 	}
-	createBuilderCommand.Flags().BoolVar(&flags.NoPull, "no-pull", false, "don't pull stack image before use")
-	createBuilderCommand.Flags().StringVarP(&flags.BuilderTomlPath, "builder-config", "b", "", "path to builder.toml file")
-	createBuilderCommand.Flags().StringVarP(&flags.StackID, "stack", "s", "", "stack ID")
-	createBuilderCommand.Flags().BoolVar(&flags.Publish, "publish", false, "publish to registry")
-	return createBuilderCommand
+	cmd.Flags().BoolVar(&flags.NoPull, "no-pull", false, style.Help("Skip pulling stack image before use"))
+	cmd.Flags().StringVarP(&flags.BuilderTomlPath, "builder-config", "b", "", style.Help("Path to builder TOML file"))
+	cmd.Flags().StringVarP(&flags.StackID, "stack", "s", "defined by set-default-stack command", style.Help("Stack name"))
+	cmd.Flags().BoolVar(&flags.Publish, "publish", false, style.Help("Publish to registry"))
+	cmd.Flags().BoolP("help", "h", false, style.Help("Help for create-builder"))
+	return cmd
 }
 
 func addStackCommand() *cobra.Command {
@@ -172,9 +181,10 @@ func addStackCommand() *cobra.Command {
 		BuildImages []string
 		RunImages   []string
 	}{}
-	addStackCommand := &cobra.Command{
-		Use:  "add-stack <stack-name> --run-image=<name> --build-image=<name>",
-		Args: cobra.ExactArgs(1),
+	cmd := &cobra.Command{
+		Use:   fmt.Sprintf("add-stack %s --build-image %s --run-image %s", style.Help("<stack-name>"), style.Help("<build-image-name>"), style.Help("<run-image-name>")),
+		Args:  cobra.ExactArgs(1),
+		Short: style.Help("Add stack to list of available stacks"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			cfg, err := config.NewDefault()
@@ -192,29 +202,10 @@ func addStackCommand() *cobra.Command {
 			return nil
 		},
 	}
-	addStackCommand.Flags().StringSliceVarP(&flags.BuildImages, "build-image", "b", []string{}, "build image to be used for bulder images built with the stack")
-	addStackCommand.Flags().StringSliceVarP(&flags.RunImages, "run-image", "r", []string{}, "run image to be used for runnable images built with the stack")
-	return addStackCommand
-}
-
-func setDefaultStackCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:  "set-default-stack <stack-name>",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cmd.SilenceUsage = true
-			cfg, err := config.New(filepath.Join(os.Getenv("HOME"), ".pack"))
-			if err != nil {
-				return err
-			}
-			err = cfg.SetDefaultStack(args[0])
-			if err != nil {
-				return err
-			}
-			fmt.Printf("%s is now the default stack\n", args[0])
-			return nil
-		},
-	}
+	cmd.Flags().StringSliceVarP(&flags.BuildImages, "build-image", "b", []string{}, style.Help("Build image to associate with stack"))
+	cmd.Flags().StringSliceVarP(&flags.RunImages, "run-image", "r", []string{}, style.Help("Run image to associate with stack,\nrepeat for each run image"))
+	cmd.Flags().BoolP("help", "h", false, style.Help("Help for add-stack"))
+	return cmd
 }
 
 func updateStackCommand() *cobra.Command {
@@ -222,9 +213,10 @@ func updateStackCommand() *cobra.Command {
 		BuildImages []string
 		RunImages   []string
 	}{}
-	updateStackCommand := &cobra.Command{
-		Use:  "update-stack <stack-name> --run-image=<name> --build-image=<name>",
-		Args: cobra.ExactArgs(1),
+	cmd := &cobra.Command{
+		Use:   fmt.Sprintf("update-stack %s --build-image %s --run-image %s", style.Help("<stack-name>"), style.Help("<build-image-name>"), style.Help("<run-image-name>")),
+		Args:  cobra.ExactArgs(1),
+		Short: style.Help("Update stack build and run images"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			cfg, err := config.New(filepath.Join(os.Getenv("HOME"), ".pack"))
@@ -241,15 +233,17 @@ func updateStackCommand() *cobra.Command {
 			return nil
 		},
 	}
-	updateStackCommand.Flags().StringSliceVarP(&flags.BuildImages, "build-image", "b", []string{}, "build image to be used for bulder images built with the stack")
-	updateStackCommand.Flags().StringSliceVarP(&flags.RunImages, "run-image", "r", []string{}, "run image to be used for runnable images built with the stack")
-	return updateStackCommand
+	cmd.Flags().StringSliceVarP(&flags.BuildImages, "build-image", "b", []string{}, style.Help("Build image to associate with stack"))
+	cmd.Flags().StringSliceVarP(&flags.RunImages, "run-image", "r", []string{}, style.Help("Run image to associate with stack,\nrepeat for each run image"))
+	cmd.Flags().BoolP("help", "h", false, style.Help("Help for update-stack"))
+	return cmd
 }
 
 func deleteStackCommand() *cobra.Command {
-	addStackCommand := &cobra.Command{
-		Use:  "delete-stack <stack-name>",
-		Args: cobra.ExactArgs(1),
+	cmd := &cobra.Command{
+		Use:   fmt.Sprintf("delete-stack %s", style.Help("<stack-name>")),
+		Args:  cobra.ExactArgs(1),
+		Short: style.Help("Delete stack from list of available stacks"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			cfg, err := config.New(filepath.Join(os.Getenv("HOME"), ".pack"))
@@ -263,17 +257,43 @@ func deleteStackCommand() *cobra.Command {
 			return nil
 		},
 	}
-	return addStackCommand
+	return cmd
+}
+
+func setDefaultStackCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   fmt.Sprintf("set-default-stack %s", style.Help("<stack-name>")),
+		Args:  cobra.ExactArgs(1),
+		Short: style.Help("Set default stack used by other commands"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			cfg, err := config.New(filepath.Join(os.Getenv("HOME"), ".pack"))
+			if err != nil {
+				return err
+			}
+			err = cfg.SetDefaultStack(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s is now the default stack\n", args[0])
+			return nil
+		},
+	}
+	cmd.Flags().BoolP("help", "h", false, style.Help("Help for set-default-stack"))
+	return cmd
 }
 
 func versionCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:  "version",
-		Args: cobra.ExactArgs(0),
+	cmd := &cobra.Command{
+		Use:   "version",
+		Args:  cobra.NoArgs,
+		Short: style.Help("Show current pack version"),
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("VERSION: %s\n", strings.TrimSpace(Version))
+			fmt.Println(strings.TrimSpace(Version))
 		},
 	}
+	cmd.Flags().BoolP("help", "h", false, style.Help("Help for version"))
+	return cmd
 }
 
 func makeStopChannelForSignals() <-chan struct{} {
