@@ -50,23 +50,6 @@ func TestPack(t *testing.T) {
 	h.AssertNil(t, dockerCli.PullImage("packs/samples"))
 	registryPort = h.RunRegistry(t)
 	defer h.StopRegistry(t)
-	packTag = os.Getenv("PACK_TAG")
-	if packTag == "" {
-		packTag = "latest"
-	}
-	for _, image := range []string{"build", "run", "samples"} {
-		h.Run(t, exec.Command(
-			"docker",
-			"tag",
-			fmt.Sprintf("packs/%s:%s", image, packTag),
-			fmt.Sprintf("localhost:%s/packs/%s:%s", registryPort, image, packTag),
-		))
-		h.Run(t, exec.Command(
-			"docker",
-			"push",
-			fmt.Sprintf("localhost:%s/packs/%s:%s", registryPort, image, packTag),
-		))
-	}
 
 	spec.Run(t, "pack", testPack, spec.Report(report.Terminal{}))
 }
@@ -82,22 +65,9 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 		var err error
 		packHome, err = ioutil.TempDir("", "buildpack.pack.home.")
 		h.AssertNil(t, err)
-		os.Setenv("PACK_HOME", packHome)
-
-		if packTag != "" {
-			h.AssertNil(t, ioutil.WriteFile(filepath.Join(packHome, "config.toml"), []byte(fmt.Sprintf(`
-				default-stack-id = "io.buildpacks.stacks.bionic"
-                default-builder = "localhost:%s/packs/samples:%s"
-
-				[[stacks]]
-				  id = "io.buildpacks.stacks.bionic"
-				  build-images = ["localhost:%s/packs/build:%s"]
-				  run-images = ["localhost:%s/packs/run:%s"]
-			`, registryPort, packTag, registryPort, packTag, registryPort, packTag)), 0666))
-		} else {
-			h.AssertNil(t, dockerCli.PullImage("packs/samples"))
-		}
+		h.ConfigurePackHome(t, packHome, registryPort)
 	})
+
 	it.After(func() {
 		os.Unsetenv("PACK_HOME")
 		os.RemoveAll(packHome)
@@ -197,7 +167,7 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 		})
 
 		when("'--publish' flag is specified", func() {
-			it.Focus("builds and exports an image", func() {
+			it("builds and exports an image", func() {
 				runPackBuild := func() string {
 					t.Helper()
 					cmd := exec.Command(pack, "build", repoName, "-p", sourceCodePath, "--publish")
@@ -335,8 +305,6 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 		})
 
 		it("builds and exports an image", func() {
-			h.AssertNil(t, dockerCli.PullImage("packs/build")) // TODO: control version, 'latest' is not stable across test runs.
-
 			builderTOML := filepath.Join("testdata", "mock_buildpacks", "builder.toml")
 			sourceCodePath := filepath.Join("testdata", "mock_app")
 

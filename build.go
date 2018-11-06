@@ -528,22 +528,37 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 			// UID:        uid,
 			// GID:        gid,
 		}
-		newImage, err := exporter.ExportImage(
-			filepath.Join(tmpDir, "pack-exporter"),
-			launchDir,
-			runImage,
-			nil, // origImage,
-		)
-		if err != nil {
-			return errors.Wrap(err, "exoprt to registry")
-		}
 		repoStore, err := img.NewRegistry(b.RepoName)
 		if err != nil {
 			return errors.Wrap(err, "access")
 		}
+		origImage, err := repoStore.Image()
+		if err != nil {
+			return errors.Wrap(err, "access")
+		}
+
+		// TODO: EC-AM: Make get metadata logic handle this instead
+		_, err = origImage.ConfigFile()
+		if err != nil {
+			origImage = nil
+		}
+		newImage, err := exporter.ExportImage(
+			filepath.Join(tmpDir, "pack-exporter"),
+			launchDir,
+			runImage,
+			origImage,
+		)
+		if err != nil {
+			return errors.Wrap(err, "export to registry")
+		}
 		if err := repoStore.Write(newImage); err != nil {
 			return errors.Wrap(err, "write")
 		}
+		hash, err := newImage.Digest()
+		if err != nil {
+			return errors.Wrap(err, "digest")
+		}
+		imgSHA = hash.String()
 	} else {
 		var metadata lifecycle.AppImageMetadata
 		bData, err := ioutil.ReadFile(filepath.Join(tmpDir, "pack-exporter", "metadata.json"))

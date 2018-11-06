@@ -144,15 +144,75 @@ func RunRegistry(t *testing.T) (localPort string) {
 		} else {
 			runRegistryLocalPort = runRegistryRemotePort
 		}
+		for _, f := range []func(*testing.T, string) string{ DefaultBuildImage, DefaultRunImage, DefaultBuilderImage} {
+			Run(t, exec.Command(
+				"docker",
+				"push",
+				f(t, runRegistryLocalPort),
+			))
+		}
 	})
 	return runRegistryLocalPort
 }
 
+func ConfigurePackHome(t *testing.T, packHome, registryPort string) {
+	t.Helper()
+	os.Setenv("PACK_HOME", packHome)
+	AssertNil(t, ioutil.WriteFile(filepath.Join(packHome, "config.toml"), []byte(fmt.Sprintf(`
+				default-stack-id = "io.buildpacks.stacks.bionic"
+                default-builder = "%s"
+
+				[[stacks]]
+				  id = "io.buildpacks.stacks.bionic"
+				  build-images = ["%s"]
+				  run-images = ["%s"]
+			`, DefaultBuilderImage(t, registryPort), DefaultBuildImage(t, registryPort), DefaultRunImage(t, registryPort))), 0666))
+}
+
 func StopRegistry(t *testing.T) {
+	t.Helper()
 	if runRegistryName != "" {
 		Run(t, exec.Command("docker", "kill", runRegistryName))
 		RunE(exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' 'localhost:%s/*')`, runRegistryRemotePort)))
 	}
+}
+
+func DefaultBuildImage(t *testing.T, registryPort string) string {
+	t.Helper()
+	tag := packTag()
+	if tag == "latest" {
+		Run(t, exec.Command("docker", "pull",  fmt.Sprintf("packs/build:%s", tag)))
+	}
+	Run(t, exec.Command("docker", "tag", fmt.Sprintf("packs/build:%s", tag), fmt.Sprintf("localhost:%s/packs/build:%s", registryPort, tag)))
+	return fmt.Sprintf("localhost:%s/packs/build:%s", registryPort, tag)
+}
+
+func DefaultRunImage(t *testing.T, registryPort string) string {
+	t.Helper()
+	tag := packTag()
+	if tag == "latest" {
+		Run(t, exec.Command("docker", "pull",  fmt.Sprintf("packs/run:%s", tag)))
+	}
+	Run(t, exec.Command("docker", "tag", fmt.Sprintf("packs/run:%s", tag), fmt.Sprintf("localhost:%s/packs/run:%s", registryPort, tag)))
+	return fmt.Sprintf("localhost:%s/packs/run:%s", registryPort, tag)
+}
+
+func DefaultBuilderImage(t *testing.T, registryPort string) string {
+	t.Helper()
+	tag := packTag()
+	if tag == "latest" {
+		Run(t, exec.Command("docker", "pull",  fmt.Sprintf("packs/samples:%s", tag)))
+	}
+	Run(t, exec.Command("docker", "tag", fmt.Sprintf("packs/samples:%s", tag), fmt.Sprintf("localhost:%s/packs/samples:%s", registryPort, tag)))
+	return fmt.Sprintf("localhost:%s/packs/samples:%s", registryPort, tag)
+}
+
+func packTag() string {
+	tag := os.Getenv("PACK_TAG")
+	if tag == "" {
+		return "latest"
+	}
+	return tag
 }
 
 func HttpGet(t *testing.T, url string) string {
@@ -168,7 +228,7 @@ func HttpGet(t *testing.T, url string) string {
 		AssertNil(t, err)
 		return string(b)
 	} else {
-		return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "--entrypoint=", "--network=host", "dgodd/packsamples", "wget", "-q", "-O", "-", url))
+		return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "--entrypoint=", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url))
 	}
 }
 
@@ -176,13 +236,13 @@ func CopyWorkspaceToDocker(t *testing.T, srcPath, destVolume string) {
 	t.Helper()
 	ctrName := uuid.New().String()
 	defer exec.Command("docker", "rm", ctrName).Run()
-	Run(t, exec.Command("docker", "create", "--name", ctrName, "-v", destVolume+":/workspace", "dgodd/packsamples", "true"))
+	Run(t, exec.Command("docker", "create", "--name", ctrName, "-v", destVolume+":/workspace", "packs/samples", "true"))
 	Run(t, exec.Command("docker", "cp", srcPath+"/.", ctrName+":/workspace/"))
 }
 
 func ReadFromDocker(t *testing.T, volume, path string) string {
 	t.Helper()
-	return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "-v", volume+":/workspace", "dgodd/packsamples", "cat", path))
+	return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "-v", volume+":/workspace", "packs/samples", "cat", path))
 }
 
 func ReplaceLocalDockerPortWithRemotePort(s string) string {
