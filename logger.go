@@ -43,7 +43,7 @@ func (l *Logger) Info(format string, a ...interface{}) {
 }
 
 func (l *Logger) Error(format string, a ...interface{}) {
-	l.printf(l.err, true, style.Tip("ERROR: ")+format, a...)
+	l.printf(l.err, true, style.Error("ERROR: ")+format, a...)
 }
 
 func (l *Logger) Debug(format string, a ...interface{}) {
