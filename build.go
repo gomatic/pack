@@ -6,17 +6,6 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
-	"io"
-	"io/ioutil"
-	"log"
-	"math/rand"
-	"os"
-	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
-
 	"github.com/BurntSushi/toml"
 	"github.com/buildpack/lifecycle"
 	"github.com/buildpack/lifecycle/img"
@@ -30,6 +19,15 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"io"
+	"io/ioutil"
+	"log"
+	"math/rand"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 )
 
 type BuildFactory struct {
@@ -468,7 +466,6 @@ func (b *BuildConfig) Build() error {
 }
 
 func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
-	start := time.Now()
 	ctx := context.Background()
 	ctr, err := b.Cli.ContainerCreate(ctx, &container.Config{
 		Image: b.Builder,
@@ -573,21 +570,21 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 		// TODO: move to init
 		imgFactory, err := image.DefaultFactory()
 		if err != nil {
-			return err
+			return errors.Wrap(err, "create default factory")
 		}
 
 		img, err := imgFactory.NewLocal(b.RunImage, false)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "new local")
 		}
 
 		runImageTopLayer, err := img.TopLayer()
 		if err != nil {
-			return err
+			return errors.Wrap(err, "get run top layer")
 		}
 		runImageDigest, err := img.Digest()
 		if err != nil {
-			return err
+			return errors.Wrap(err, "get run digest")
 		}
 		metadata.RunImage = lifecycle.RunImageMetadata{
 			TopLayer: runImageTopLayer,
@@ -630,12 +627,12 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 					// TODO error nicely on not found
 					layer.SHA = prevBP.Layers[layerName].SHA
 					if err := img.ReuseLayer(layer.SHA); err != nil {
-						return err
+						return errors.Wrapf(err, "reuse layer '%s/%s' from previous image", bp.ID, layerName)
 					}
 					metadata.Buildpacks[index].Layers[layerName] = layer
 				} else {
 					if err := img.AddLayer(filepath.Join(tmpDir, "pack-exporter", strings.TrimPrefix(layer.SHA, "sha256:")+".tar")); err != nil {
-						return err
+						return errors.Wrapf(err, "add layer '%s/%s'", bp.ID, layerName)
 					}
 				}
 			}
@@ -660,7 +657,6 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 		}
 	}
 
-	fmt.Println("EXPORT TIMING:", time.Since(start))
 	b.Log.Printf("\n*** Image: %s@%s\n", b.RepoName, imgSHA)
 	return nil
 }

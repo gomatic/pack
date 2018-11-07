@@ -26,8 +26,8 @@ func TestRemote(t *testing.T) {
 	rand.Seed(time.Now().UTC().UnixNano())
 	log.SetOutput(ioutil.Discard)
 
-	defer h.StopRegistry(t)
 	registryPort = h.RunRegistry(t)
+	defer h.StopRegistry(t)
 
 	spec.Run(t, "remote", testRemote, spec.Parallel(), spec.Report(report.Terminal{}))
 }

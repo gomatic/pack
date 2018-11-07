@@ -33,11 +33,10 @@ import (
 )
 
 var registryPort string
+
 func TestBuild(t *testing.T) {
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	h.AssertNil(t, exec.Command("docker", "pull", "dgodd/packsamples").Run())
-	h.AssertNil(t, exec.Command("docker", "pull", "packs/run").Run())
 	registryPort = h.RunRegistry(t)
 	defer h.StopRegistry(t)
 	packHome, err := ioutil.TempDir("", "build-test-pack-home")
@@ -560,136 +559,125 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 					{ID: "io.buildpacks.samples.nodejs", Version: "0.0.1"},
 				},
 			}
-			h.AssertNil(t, exec.Command("docker", "pull", "packs/run").Run())
+			h.AssertNil(t, exec.Command("docker", "pull", h.DefaultRunImage(t, registryPort)).Run())
 			runSHA = imageSHA(t, subject.RunImage)
 			runTopLayer = topLayer(t, subject.RunImage)
 		})
 		it.After(func() { h.RemoveImage(subject.RepoName) })
 
-		when("no previous image exists", func() {
-			when("publish", func() {
-				var oldRepoName string
-				it.Before(func() {
-					oldRepoName = subject.RepoName
+		when("publish", func() {
+			var oldRepoName string
+			it.Before(func() {
+				oldRepoName = subject.RepoName
 
-					subject.RepoName = "localhost:" + registryPort + "/" + oldRepoName
-					subject.Publish = true
-				})
-				it("creates the image on the registry", func() {
-					h.AssertNil(t, subject.Export(group))
-					images := h.HttpGet(t, "http://localhost:"+registryPort+"/v2/_catalog")
-					h.AssertContains(t, images, oldRepoName)
-				})
-				it("puts the files on the image", func() {
-					h.AssertNil(t, subject.Export(group))
+				subject.RepoName = "localhost:" + registryPort + "/" + oldRepoName
+				subject.Publish = true
+			})
+			it("creates the image on the registry", func() {
+				h.AssertNil(t, subject.Export(group))
+				images := h.HttpGet(t, "http://localhost:"+registryPort+"/v2/_catalog")
+				h.AssertContains(t, images, oldRepoName)
+			})
+			it("puts the files on the image", func() {
+				h.AssertNil(t, subject.Export(group))
 
-					h.Run(t, exec.Command("docker", "pull", subject.RepoName))
-					txt := h.Run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/app/file.txt"))
-					h.AssertEq(t, string(txt), "some text")
+				h.Run(t, exec.Command("docker", "pull", subject.RepoName))
+				txt := h.Run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/app/file.txt"))
+				h.AssertEq(t, string(txt), "some text")
 
-					txt = h.Run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/io.buildpacks.samples.nodejs/mylayer/file.txt"))
-					h.AssertEq(t, string(txt), "content")
-				})
-				it("sets the metadata on the image", func() {
-					h.AssertNil(t, subject.Export(group))
+				txt = h.Run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/io.buildpacks.samples.nodejs/mylayer/file.txt"))
+				h.AssertEq(t, string(txt), "content")
+			})
+			it("sets the metadata on the image", func() {
+				h.AssertNil(t, subject.Export(group))
 
-					h.Run(t, exec.Command("docker", "pull", subject.RepoName))
-					var metadata lifecycle.AppImageMetadata
-					metadataJSON := h.Run(t, exec.Command("docker", "inspect", subject.RepoName, "--format", `{{index .Config.Labels "io.buildpacks.lifecycle.metadata"}}`))
-					h.AssertNil(t, json.Unmarshal([]byte(metadataJSON), &metadata))
+				h.Run(t, exec.Command("docker", "pull", subject.RepoName))
+				var metadata lifecycle.AppImageMetadata
+				metadataJSON := h.Run(t, exec.Command("docker", "inspect", subject.RepoName, "--format", `{{index .Config.Labels "io.buildpacks.lifecycle.metadata"}}`))
+				h.AssertNil(t, json.Unmarshal([]byte(metadataJSON), &metadata))
 
-					h.AssertEq(t, metadata.RunImage.SHA, runSHA)
-					h.AssertEq(t, metadata.RunImage.TopLayer, runTopLayer)
-					h.AssertContains(t, metadata.App.SHA, "sha256:")
-					h.AssertContains(t, metadata.Config.SHA, "sha256:")
-					h.AssertEq(t, len(metadata.Buildpacks), 1)
-					h.AssertContains(t, metadata.Buildpacks[0].Layers["mylayer"].SHA, "sha256:")
-					h.AssertEq(t, metadata.Buildpacks[0].Layers["mylayer"].Data, map[string]interface{}{"key": "myval"})
-					h.AssertContains(t, metadata.Buildpacks[0].Layers["other"].SHA, "sha256:")
-				})
+				h.AssertEq(t, metadata.RunImage.SHA, runSHA)
+				h.AssertEq(t, metadata.RunImage.TopLayer, runTopLayer)
+				h.AssertContains(t, metadata.App.SHA, "sha256:")
+				h.AssertContains(t, metadata.Config.SHA, "sha256:")
+				h.AssertEq(t, len(metadata.Buildpacks), 1)
+				h.AssertContains(t, metadata.Buildpacks[0].Layers["mylayer"].SHA, "sha256:")
+				h.AssertEq(t, metadata.Buildpacks[0].Layers["mylayer"].Data, map[string]interface{}{"key": "myval"})
+				h.AssertContains(t, metadata.Buildpacks[0].Layers["other"].SHA, "sha256:")
+			})
+		})
+
+		when("daemon", func() {
+			it.Before(func() { subject.Publish = false })
+
+			it("creates the image on the daemon", func() {
+				h.AssertNil(t, subject.Export(group))
+				images := h.Run(t, exec.Command("docker", "images", "--format", "{{.Repository}}:{{.Tag}}"))
+				h.AssertContains(t, string(images), subject.RepoName)
+			})
+			it("puts the files on the image", func() {
+				h.AssertNil(t, subject.Export(group))
+
+				txt := h.Run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/app/file.txt"))
+				h.AssertEq(t, string(txt), "some text")
+
+				txt = h.Run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/io.buildpacks.samples.nodejs/mylayer/file.txt"))
+				h.AssertEq(t, string(txt), "content")
+			})
+			it("sets the metadata on the image", func() {
+				h.AssertNil(t, subject.Export(group))
+
+				var metadata lifecycle.AppImageMetadata
+				metadataJSON := h.Run(t, exec.Command("docker", "inspect", subject.RepoName, "--format", `{{index .Config.Labels "io.buildpacks.lifecycle.metadata"}}`))
+				h.AssertNil(t, json.Unmarshal([]byte(metadataJSON), &metadata))
+
+				h.AssertEq(t, metadata.RunImage.SHA, runSHA)
+				h.AssertEq(t, metadata.RunImage.TopLayer, runTopLayer)
+				h.AssertContains(t, metadata.App.SHA, "sha256:")
+				h.AssertContains(t, metadata.Config.SHA, "sha256:")
+				h.AssertEq(t, len(metadata.Buildpacks), 1)
+				h.AssertContains(t, metadata.Buildpacks[0].Layers["mylayer"].SHA, "sha256:")
+				h.AssertEq(t, metadata.Buildpacks[0].Layers["mylayer"].Data, map[string]interface{}{"key": "myval"})
+				h.AssertContains(t, metadata.Buildpacks[0].Layers["other"].SHA, "sha256:")
 			})
 
-			when("daemon", func() {
-				it.Before(func() { subject.Publish = false })
-
-				it("creates the image on the daemon", func() {
-					h.AssertNil(t, subject.Export(group))
-					images := h.Run(t, exec.Command("docker", "images", "--format", "{{.Repository}}:{{.Tag}}"))
-					h.AssertContains(t, string(images), subject.RepoName)
-				})
-				it("puts the files on the image", func() {
-					h.AssertNil(t, subject.Export(group))
-
-					txt := h.Run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/app/file.txt"))
-					h.AssertEq(t, string(txt), "some text")
-
-					txt = h.Run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/io.buildpacks.samples.nodejs/mylayer/file.txt"))
-					h.AssertEq(t, string(txt), "content")
-				})
-				it("sets the metadata on the image", func() {
-					h.AssertNil(t, subject.Export(group))
-
-					var metadata lifecycle.AppImageMetadata
-					metadataJSON := h.Run(t, exec.Command("docker", "inspect", subject.RepoName, "--format", `{{index .Config.Labels "io.buildpacks.lifecycle.metadata"}}`))
-					h.AssertNil(t, json.Unmarshal([]byte(metadataJSON), &metadata))
-
-					h.AssertEq(t, metadata.RunImage.SHA, runSHA)
-					h.AssertEq(t, metadata.RunImage.TopLayer, runTopLayer)
-					h.AssertContains(t, metadata.App.SHA, "sha256:")
-					h.AssertContains(t, metadata.Config.SHA, "sha256:")
-					h.AssertEq(t, len(metadata.Buildpacks), 1)
-					h.AssertContains(t, metadata.Buildpacks[0].Layers["mylayer"].SHA, "sha256:")
-					h.AssertEq(t, metadata.Buildpacks[0].Layers["mylayer"].Data, map[string]interface{}{"key": "myval"})
-					h.AssertContains(t, metadata.Buildpacks[0].Layers["other"].SHA, "sha256:")
-				})
-
-				it("sets owner of layer files to PACK_USER_ID:PACK_GROUP_ID", func() {
-					subject.Builder = "packs/samples-" + h.RandString(8)
-					cmd := exec.Command("docker", "build", "-t", subject.Builder, "-")
-					cmd.Stdin = strings.NewReader(fmt.Sprintf(`
+			it("sets owner of layer files to PACK_USER_ID:PACK_GROUP_ID", func() {
+				subject.Builder = "packs/samples-" + h.RandString(8)
+				cmd := exec.Command("docker", "build", "-t", subject.Builder, "-")
+				cmd.Stdin = strings.NewReader(fmt.Sprintf(`
 						FROM %s
 						ENV PACK_USER_ID 1234
 						ENV PACK_GROUP_ID 5678
 					`, h.DefaultBuilderImage(t, registryPort)))
-					h.Run(t, cmd)
+				h.Run(t, cmd)
 
-					h.AssertNil(t, subject.Export(group))
-					txt := h.Run(t, exec.Command("docker", "run", subject.RepoName, "ls", "-la", "/workspace/app/file.txt"))
-					h.AssertContains(t, string(txt), " 1234 5678 ")
-				})
-
-				it("errors if run image is missing PACK_USER_ID", func() {
-					subject.Builder = "packs/samples-" + h.RandString(8)
-					cmd := exec.Command("docker", "build", "-t", subject.Builder, "-")
-					cmd.Stdin =  strings.NewReader(fmt.Sprintf(`
-						FROM %s
-						ENV PACK_USER_ID ''
-						ENV PACK_GROUP_ID 5678
-					`, h.DefaultBuilderImage(t, registryPort)))
-					h.Run(t, cmd)
-
-					err := subject.Export(group)
-					h.AssertError(t, err, "export: not found pack uid & gid")
-				})
+				h.AssertNil(t, subject.Export(group))
+				txt := h.Run(t, exec.Command("docker", "run", subject.RepoName, "ls", "-la", "/workspace/app/file.txt"))
+				h.AssertContains(t, string(txt), " 1234 5678 ")
 			})
-		})
 
-		when("previous image exists", func() {
-			it("reuses images from previous layers", func() {
-				addLayer := "ADD --chown=1000:1000 /workspace/io.buildpacks.samples.nodejs/mylayer /workspace/io.buildpacks.samples.nodejs/mylayer"
-				copyLayer := "COPY --from=prev --chown=1000:1000 /workspace/io.buildpacks.samples.nodejs/mylayer /workspace/io.buildpacks.samples.nodejs/mylayer"
+			when("previous image exists", func() {
+				it("reuses images from previous layers", func() {
+					t.Log("create image and h.Assert add new layer")
+					h.AssertNil(t, subject.Export(group))
+					txt := h.Run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/io.buildpacks.samples.nodejs/mylayer/file.txt"))
+					h.AssertEq(t, string(txt), "content")
 
-				t.Log("create image and h.Assert add new layer")
-				h.AssertNil(t, subject.Export(group))
-				h.AssertContains(t, buf.String(), addLayer)
+					t.Log("setup workspace to reuse layer")
+					buf.Reset()
+					h.Run(t, exec.Command(
+						"docker", "run",
+						"--user=root",
+						"-v", subject.WorkspaceVolume+":/workspace",
+						h.DefaultBuilderImage(t, registryPort),
+						"rm", "-rf", "/workspace/io.buildpacks.samples.nodejs/mylayer",
+					))
 
-				t.Log("setup workspace to reuse layer")
-				buf.Reset()
-				h.Run(t, exec.Command("docker", "run", "--user=root", "-v", subject.WorkspaceVolume+":/workspace", h.DefaultBuilderImage(t, registryPort), "rm", "-rf", "/workspace/io.buildpacks.samples.nodejs/mylayer"))
-
-				t.Log("recreate image and h.Assert copying layer from previous image")
-				h.AssertNil(t, subject.Export(group))
-				h.AssertContains(t, buf.String(), copyLayer)
+					t.Log("recreate image and h.Assert copying layer from previous image")
+					h.AssertNil(t, subject.Export(group))
+					txt = h.Run(t, exec.Command("docker", "run", subject.RepoName, "cat", "/workspace/io.buildpacks.samples.nodejs/mylayer/file.txt"))
+					h.AssertEq(t, string(txt), "content")
+				})
 			})
 		})
 	})
