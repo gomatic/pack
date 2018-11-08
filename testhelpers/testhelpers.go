@@ -144,7 +144,7 @@ func RunRegistry(t *testing.T) (localPort string) {
 		} else {
 			runRegistryLocalPort = runRegistryRemotePort
 		}
-		for _, f := range []func(*testing.T, string) string{ DefaultBuildImage, DefaultRunImage, DefaultBuilderImage} {
+		for _, f := range []func(*testing.T, string) string{DefaultBuildImage, DefaultRunImage, DefaultBuilderImage} {
 			Run(t, exec.Command(
 				"docker",
 				"push",
@@ -177,33 +177,49 @@ func StopRegistry(t *testing.T) {
 	}
 }
 
+var getBuildImageOnce sync.Once
+
 func DefaultBuildImage(t *testing.T, registryPort string) string {
 	t.Helper()
 	tag := packTag()
-	if tag == "latest" {
-		Run(t, exec.Command("docker", "pull",  fmt.Sprintf("packs/build:%s", tag)))
-	}
-	Run(t, exec.Command("docker", "tag", fmt.Sprintf("packs/build:%s", tag), fmt.Sprintf("localhost:%s/packs/build:%s", registryPort, tag)))
+	getBuildImageOnce.Do(func() {
+		if tag == "latest" {
+			Run(t, exec.Command("docker", "pull", fmt.Sprintf("packs/build:%s", tag)))
+		}
+		Run(t, exec.Command(
+			"docker", "tag",
+			fmt.Sprintf("packs/build:%s", tag),
+			fmt.Sprintf("localhost:%s/packs/build:%s", registryPort, tag),
+		))
+	})
 	return fmt.Sprintf("localhost:%s/packs/build:%s", registryPort, tag)
 }
+
+var getRunImageOnce sync.Once
 
 func DefaultRunImage(t *testing.T, registryPort string) string {
 	t.Helper()
 	tag := packTag()
-	if tag == "latest" {
-		Run(t, exec.Command("docker", "pull",  fmt.Sprintf("packs/run:%s", tag)))
-	}
-	Run(t, exec.Command("docker", "tag", fmt.Sprintf("packs/run:%s", tag), fmt.Sprintf("localhost:%s/packs/run:%s", registryPort, tag)))
+	getRunImageOnce.Do(func() {
+		if tag == "latest" {
+			Run(t, exec.Command("docker", "pull", fmt.Sprintf("packs/run:%s", tag)))
+		}
+		Run(t, exec.Command("docker", "tag", fmt.Sprintf("packs/run:%s", tag), fmt.Sprintf("localhost:%s/packs/run:%s", registryPort, tag)))
+	})
 	return fmt.Sprintf("localhost:%s/packs/run:%s", registryPort, tag)
 }
+
+var getBuilderImageOnce sync.Once
 
 func DefaultBuilderImage(t *testing.T, registryPort string) string {
 	t.Helper()
 	tag := packTag()
-	if tag == "latest" {
-		Run(t, exec.Command("docker", "pull",  fmt.Sprintf("packs/samples:%s", tag)))
-	}
-	Run(t, exec.Command("docker", "tag", fmt.Sprintf("packs/samples:%s", tag), fmt.Sprintf("localhost:%s/packs/samples:%s", registryPort, tag)))
+	getBuilderImageOnce.Do(func() {
+		if tag == "latest" {
+			Run(t, exec.Command("docker", "pull", fmt.Sprintf("packs/samples:%s", tag)))
+		}
+		Run(t, exec.Command("docker", "tag", fmt.Sprintf("packs/samples:%s", tag), fmt.Sprintf("localhost:%s/packs/samples:%s", registryPort, tag)))
+	})
 	return fmt.Sprintf("localhost:%s/packs/samples:%s", registryPort, tag)
 }
 
