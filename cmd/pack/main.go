@@ -32,12 +32,46 @@ func main() {
 		setDefaultStackCommand,
 		setDefaultBuilderCommand,
 		versionCommand,
+		inspectBuilderCommand,
 	} {
 		rootCmd.AddCommand(f())
 	}
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func inspectBuilderCommand() *cobra.Command {
+	inspectBuilderCommand := &cobra.Command{
+		Use:  "inspect-builder <image-name>",
+		Short: "Inspects given image",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+
+			docker, err := docker.New()
+			if err != nil {
+				return err
+			}
+			cfg, err := config.NewDefault()
+			if err != nil {
+				return err
+			}
+			builderFactory := pack.BuilderFactory{
+				FS:     &fs.FS{},
+				Log:    log.New(os.Stdout, "", log.LstdFlags),
+				Docker: docker,
+				Config: cfg,
+				Images: &image.Client{},
+			}
+			inspectConfig, err := builderFactory.ImageFromFlags(args[0])
+			if err != nil {
+				return err
+			}
+			return builderFactory.Inspect(inspectConfig)
+		},
+	}
+	return inspectBuilderCommand
 }
 
 func buildCommand() *cobra.Command {
