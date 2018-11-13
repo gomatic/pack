@@ -130,7 +130,8 @@ func proxyDockerHostPort(port string) (string, error) {
 var runRegistryName, runRegistryLocalPort, runRegistryRemotePort string
 var runRegistryOnce sync.Once
 
-func RunRegistry(t *testing.T) (localPort string) {
+func RunRegistry(t *testing.T, seedRegistry bool) (localPort string) {
+	t.Log("run registry")
 	t.Helper()
 	runRegistryOnce.Do(func() {
 		runRegistryName = "test-registry-" + RandString(10)
@@ -144,12 +145,15 @@ func RunRegistry(t *testing.T) (localPort string) {
 		} else {
 			runRegistryLocalPort = runRegistryRemotePort
 		}
-		for _, f := range []func(*testing.T, string) string{DefaultBuildImage, DefaultRunImage, DefaultBuilderImage} {
-			Run(t, exec.Command(
-				"docker",
-				"push",
-				f(t, runRegistryLocalPort),
-			))
+		if seedRegistry {
+			t.Log("seed registry")
+			for _, f := range []func(*testing.T, string) string{DefaultBuildImage, DefaultRunImage, DefaultBuilderImage} {
+				Run(t, exec.Command(
+					"docker",
+					"push",
+					f(t, runRegistryLocalPort),
+				))
+			}
 		}
 	})
 	return runRegistryLocalPort
@@ -170,6 +174,7 @@ func ConfigurePackHome(t *testing.T, packHome, registryPort string) {
 }
 
 func StopRegistry(t *testing.T) {
+	t.Log("stop registry")
 	t.Helper()
 	if runRegistryName != "" {
 		Run(t, exec.Command("docker", "kill", runRegistryName))
@@ -265,52 +270,11 @@ func ReplaceLocalDockerPortWithRemotePort(s string) string {
 	return strings.Replace(s, "localhost:"+runRegistryLocalPort, "localhost:"+runRegistryRemotePort, -1)
 }
 
-func RemoveImage(names ...string) error {
-	var firstError error
-	var imgIDs []string
-	for _, name := range names {
-		if strings.HasPrefix(name, "localhost:") {
-			name = regexp.MustCompile(`localhost:\d+`).ReplaceAllString(name, "localhost:*")
-		}
-		ids, err := RunE(exec.Command("docker", "images", "--format={{.ID}}", name))
-		if firstError == nil {
-			firstError = err
-		}
-		imgIDs = append(imgIDs, trimEmpty(strings.Split(ids, "\n"))...)
-	}
-	for {
-		foundChildren := false
-		danglingIDs, _ := RunE(exec.Command("docker", "images", "-a", "--no-trunc", "-q"))
-		for _, imgID := range trimEmpty(strings.Split(danglingIDs, "\n")) {
-			parentID, err := RunE(exec.Command("docker", "inspect", "--format={{.Parent}}", imgID))
-			if strings.HasPrefix(parentID, "sha256:") && len(parentID) > 20 {
-				parentID = parentID[7:19]
-			}
-			if err == nil && parentID != "" && contains(imgIDs, parentID) {
-				shortID := imgID[7:19]
-				if !contains(imgIDs, shortID) {
-					imgIDs = append([]string{shortID}, imgIDs...)
-					foundChildren = true
-				}
-			}
-		}
-		if !foundChildren {
-			break
-		}
-	}
-	for i := 0; i < 2; i++ {
-		for _, imgID := range imgIDs {
-			imgID = strings.TrimSpace(imgID)
-			if imgID == "" {
-				continue
-			}
-			_, err := RunE(exec.Command("docker", "rmi", "-f", imgID))
-			if firstError == nil {
-				firstError = err
-			}
-		}
-	}
-	return firstError
+func ImageID(t *testing.T, repoName string) string {
+	t.Helper()
+	id, err := RunE(exec.Command("docker", "images", "--format={{.ID}}", repoName))
+	AssertNil(t, err)
+	return strings.TrimSpace(id)
 }
 
 func Run(t *testing.T, cmd *exec.Cmd) string {
@@ -318,6 +282,13 @@ func Run(t *testing.T, cmd *exec.Cmd) string {
 	txt, err := RunE(cmd)
 	AssertNil(t, err)
 	return txt
+}
+
+func CleanDefaultImages(t *testing.T, registryPort string) {
+	t.Helper()
+	Run(t, exec.Command("docker", "rmi", DefaultRunImage(t, registryPort)))
+	Run(t, exec.Command("docker", "rmi", DefaultBuildImage(t, registryPort)))
+	Run(t, exec.Command("docker", "rmi", DefaultBuilderImage(t, registryPort)))
 }
 
 func RunE(cmd *exec.Cmd) (string, error) {

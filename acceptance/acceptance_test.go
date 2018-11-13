@@ -46,10 +46,9 @@ func TestPack(t *testing.T) {
 	var err error
 	dockerCli, err = docker.New()
 	h.AssertNil(t, err)
-	h.AssertNil(t, dockerCli.PullImage("sclevine/test"))
-	h.AssertNil(t, dockerCli.PullImage("packs/samples"))
-	registryPort = h.RunRegistry(t)
+	registryPort = h.RunRegistry(t, true)
 	defer h.StopRegistry(t)
+	defer h.CleanDefaultImages(t, registryPort)
 
 	spec.Run(t, "pack", testPack, spec.Report(report.Terminal{}))
 }

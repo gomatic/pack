@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/buildpack/pack/docker"
 	"io"
 	"io/ioutil"
 	"log"
@@ -15,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buildpack/pack/docker"
 	"github.com/buildpack/pack/fs"
 	"github.com/buildpack/pack/image"
 	h "github.com/buildpack/pack/testhelpers"
@@ -44,9 +44,6 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		}
 		repoName = "pack-image-test-" + h.RandString(10)
 	})
-	it.After(func() {
-		h.RemoveImage(repoName)
-	})
 
 	when("#Label", func() {
 		when("image exists", func() {
@@ -58,6 +55,11 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				`)
 				h.Run(t, cmd)
 			})
+
+			it.After(func() {
+				h.Run(t, exec.Command("docker", "rmi", repoName))
+			})
+
 			it("returns the label value", func() {
 				img, err := factory.NewLocal(repoName, false)
 				h.AssertNil(t, err)
@@ -127,7 +129,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			})
 
 			it.After(func() {
-				h.RemoveImage(repoName)
+				h.Run(t, exec.Command("docker", "rmi", repoName))
 			})
 
 			it("returns an empty string", func() {
@@ -141,17 +143,29 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 
 	when("#SetLabel", func() {
 		when("image exists", func() {
+			var (
+				img    image.Image
+				origID string
+			)
 			it.Before(func() {
+				var err error
 				cmd := exec.Command("docker", "build", "-t", repoName, "-")
 				cmd.Stdin = strings.NewReader(`
 					FROM scratch
 					LABEL some-key=some-value
 				`)
 				h.Run(t, cmd)
+				img, err = factory.NewLocal(repoName, false)
+				h.AssertNil(t, err)
+				origID = h.ImageID(t, repoName)
+			})
+
+			it.After(func() {
+				h.Run(t, exec.Command("docker", "rmi", repoName))
+				h.Run(t, exec.Command("docker", "rmi", origID))
 			})
 
 			it("sets label and saves label to docker daemon", func() {
-				img, _ := factory.NewLocal(repoName, false)
 				h.AssertNil(t, img.SetLabel("somekey", "new-val"))
 				t.Log("set label")
 				label, err := img.Label("somekey")
@@ -169,7 +183,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 
 	when("#Rebase", func() {
 		when("image exists", func() {
-			var oldBase, oldTopLayer, newBase, origNumLayers string
+			var oldBase, oldTopLayer, newBase, origNumLayers, origID string
 			it.Before(func() {
 				oldBase = "pack-oldbase-test-" + h.RandString(10)
 				oldTopLayer = createImageOnLocal(t, oldBase, `
@@ -192,9 +206,14 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				`, oldBase))
 
 				origNumLayers = h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{len .RootFS.Layers}}"))
+				origID = h.ImageID(t, repoName)
 			})
+
 			it.After(func() {
-				h.RemoveImage(repoName, oldBase, newBase)
+				h.Run(t, exec.Command("docker", "rmi", repoName))
+				h.Run(t, exec.Command("docker", "rmi", oldBase))
+				h.Run(t, exec.Command("docker", "rmi", newBase))
+				h.Run(t, exec.Command("docker", "rmi", origID))
 			})
 
 			it("switches the base", func() {
@@ -225,24 +244,26 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				// Final Image should have same number of layers as initial image
 				numLayers := h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{len .RootFS.Layers}}"))
 				h.AssertEq(t, numLayers, origNumLayers)
-
-				// TODO : remove as unneccessary? or leave to show they don't blow up?
-				//        NOTE: I did move below the assertions about the saved image
-				_, err = img.Save()
-				h.AssertNil(t, err)
 			})
 		})
 	})
 
 	when("#TopLayer", func() {
 		when("image exists", func() {
-			it("returns the digest for the top layer (useful for rebasing)", func() {
-				expectedTopLayer := createImageOnLocal(t, repoName, `
+			var expectedTopLayer string
+			it.Before(func() {
+				expectedTopLayer = createImageOnLocal(t, repoName, `
 					FROM busybox
 					RUN echo old-base > base.txt
 					RUN echo text-old-base > otherfile.txt
 				`)
+			})
 
+			it.After(func() {
+				h.Run(t, exec.Command("docker", "rmi", repoName))
+			})
+
+			it("returns the digest for the top layer (useful for rebasing)", func() {
 				img, err := factory.NewLocal(repoName, false)
 				h.AssertNil(t, err)
 
@@ -257,6 +278,8 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 	when("#AddLayer", func() {
 		var (
 			tarPath string
+			img     image.Image
+			origID  string
 		)
 		it.Before(func() {
 			createImageOnLocal(t, repoName, `
@@ -272,18 +295,20 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			h.AssertNil(t, err)
 			tarPath = tarFile.Name()
 
+			img, err = factory.NewLocal(repoName, false)
+			h.AssertNil(t, err)
+			origID = h.ImageID(t, repoName)
 		})
 
 		it.After(func() {
 			err := os.Remove(tarPath)
 			h.AssertNil(t, err)
+			h.Run(t, exec.Command("docker", "rmi", repoName))
+			h.Run(t, exec.Command("docker", "rmi", origID))
 		})
 
 		it("appends a layer", func() {
-			img, err := factory.NewLocal(repoName, false)
-			h.AssertNil(t, err)
-
-			err = img.AddLayer(tarPath)
+			err := img.AddLayer(tarPath)
 			h.AssertNil(t, err)
 
 			_, err = img.Save()
@@ -298,8 +323,14 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 	})
 
 	when("#ReuseLayer", func() {
-		var layer1SHA, layer2SHA string
+		var (
+			layer1SHA string
+			layer2SHA string
+			img       image.Image
+			origID    string
+		)
 		it.Before(func() {
+			var err error
 			createImageOnLocal(t, repoName, `
 					FROM busybox
 					RUN echo -n old-layer-1 > layer-1.txt
@@ -308,15 +339,21 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 
 			layer1SHA = strings.TrimSpace(h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{index .RootFS.Layers 1}}")))
 			layer2SHA = strings.TrimSpace(h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{index .RootFS.Layers 2}}")))
-		})
-
-		it("reuses a layer", func() {
-			img, err := factory.NewLocal("busybox", false)
+			img, err = factory.NewLocal("busybox", false)
 			h.AssertNil(t, err)
 
 			img.Rename(repoName)
+			h.AssertNil(t, err)
+			origID = h.ImageID(t, repoName)
+		})
 
-			err = img.ReuseLayer(layer2SHA)
+		it.After(func() {
+			h.Run(t, exec.Command("docker", "rmi", repoName))
+			h.Run(t, exec.Command("docker", "rmi", origID))
+		})
+
+		it("reuses a layer", func() {
+			err := img.ReuseLayer(layer2SHA)
 			h.AssertNil(t, err)
 
 			_, err = img.Save()
@@ -331,12 +368,7 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		})
 
 		it("does not download the old image if layers are directly above (performance)", func() {
-			img, err := factory.NewLocal("busybox", false)
-			h.AssertNil(t, err)
-
-			img.Rename(repoName)
-
-			err = img.ReuseLayer(layer1SHA)
+			err := img.ReuseLayer(layer1SHA)
 			h.AssertNil(t, err)
 
 			_, err = img.Save()
@@ -352,17 +384,29 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 	})
 
 	when("#Save", func() {
+		var (
+			img    image.Image
+			origID string
+		)
 		when("image exists", func() {
-			it("returns the image digest", func() {
+			it.Before(func() {
+				var err error
 				createImageOnLocal(t, repoName, `
 					FROM busybox
 					LABEL mykey=oldValue
 				`)
-
-				img, err := factory.NewLocal(repoName, false)
+				img, err = factory.NewLocal(repoName, false)
 				h.AssertNil(t, err)
+				origID = h.ImageID(t, repoName)
+			})
 
-				err = img.SetLabel("mykey", "newValue")
+			it.After(func() {
+				h.Run(t, exec.Command("docker", "rmi", repoName))
+				h.Run(t, exec.Command("docker", "rmi", origID))
+			})
+
+			it("returns the image digest", func() {
+				err := img.SetLabel("mykey", "newValue")
 				h.AssertNil(t, err)
 
 				imgDigest, err := img.Save()

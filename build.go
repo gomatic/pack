@@ -490,6 +490,7 @@ func (b *BuildConfig) Export(group *lifecycle.BuildpackGroup) error {
 	if err := b.Cli.RunContainer(ctx, ctr.ID, b.Stdout, b.Stderr); err != nil {
 		return errors.Wrap(err, "run lifecycle/exporter")
 	}
+	defer b.Cli.ContainerRemove(ctx, ctr.ID, dockertypes.ContainerRemoveOptions{})
 
 	r, _, err := b.Cli.CopyFromContainer(ctx, ctr.ID, "/tmp/pack-exporter")
 	if err != nil {
