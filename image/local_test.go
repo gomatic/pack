@@ -92,7 +92,9 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 
 	when("#Name", func() {
 		it("always returns the original name", func() {
-			img, _ := factory.NewLocal(repoName, false)
+			img, err := factory.NewLocal(repoName, false)
+			h.AssertNil(t, err)
+
 			h.AssertEq(t, img.Name(), repoName)
 		})
 	})
