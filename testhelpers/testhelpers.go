@@ -162,21 +162,31 @@ func StopRegistry(t *testing.T) {
 	}
 }
 
-func HttpGet(t *testing.T, url string) string {
-	t.Helper()
+func HttpGetE(url string) (string, error) {
 	if os.Getenv("DOCKER_HOST") == "" {
 		resp, err := http.Get(url)
-		AssertNil(t, err)
+		if err != nil {
+			return "", err
+		}
 		defer resp.Body.Close()
 		if resp.StatusCode >= 300 {
-			t.Fatalf("HTTP Status was bad: %s => %d", url, resp.StatusCode)
+			return "", fmt.Errorf("HTTP Status was bad: %s => %d", url, resp.StatusCode)
 		}
 		b, err := ioutil.ReadAll(resp.Body)
-		AssertNil(t, err)
-		return string(b)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
 	} else {
-		return Run(t, exec.Command("docker", "run", "--log-driver=none", "--entrypoint=", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url))
+		return RunE(exec.Command("docker", "run", "--log-driver=none", "--entrypoint=", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url))
 	}
+}
+
+func HttpGet(t *testing.T, url string) string {
+	t.Helper()
+	txt, err := HttpGetE(url)
+	AssertNil(t, err)
+	return txt
 }
 
 func CopyWorkspaceToDocker(t *testing.T, srcPath, destVolume string) {

@@ -2,6 +2,7 @@ package acceptance
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -200,6 +201,80 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 				}
 			})
 		}, spec.Parallel(), spec.Report(report.Terminal{}))
+	}, spec.Parallel(), spec.Report(report.Terminal{}))
+
+	when("pack run", func() {
+		var sourceCodePath string
+
+		it.Before(func() {
+			var err error
+			sourceCodePath, err = ioutil.TempDir("", "pack.build.node_app.")
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.Run(t, exec.Command("cp", "-r", "testdata/node_app/.", sourceCodePath))
+
+		})
+		it.After(func() {
+			//dockerCli.ContainerKill(context.TODO(), containerName, "SIGKILL")
+
+			repoName := fmt.Sprintf("pack.local/run/%x", md5.Sum([]byte(sourceCodePath)))
+			dockerCli.ImageRemove(context.TODO(), repoName, dockertypes.ImageRemoveOptions{Force: true, PruneChildren: true})
+
+			if sourceCodePath != "" {
+				os.RemoveAll(sourceCodePath)
+			}
+		})
+
+		it.Focus("test", func() {
+			cmd := exec.Command(pack, "run", "--port", "3000")
+
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			cmd.Dir = sourceCodePath
+			cmd.Start()
+			time.Sleep(100 * time.Second)
+			fmt.Println("SLEEP")
+			cmd.Process.Kill()
+		})
+
+		it("starts an image", func() {
+			cmd := exec.Command(pack, "run", "--port", "3000")
+
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			cmd.Dir = sourceCodePath
+			cmd.Start()
+			defer func () {
+				_ = cmd.Process.Kill()
+				if _, err := cmd.Process.Wait(); err != nil {
+					fmt.Println("failed to kill process: ", err)
+				}
+			}()
+
+			timer := time.NewTimer(100 * time.Second)
+			defer timer.Stop()
+			for {
+				fmt.Println("INSIDEFOR")
+
+				txt, err := h.HttpGetE("http://localhost:3000")
+				fmt.Println("err", err)
+				fmt.Println("err", err)
+				if err == nil {
+					h.AssertEq(t, txt, "Buildpacks Worked! - 1000:1000")
+					break
+				}
+
+				select {
+				case <-timer.C:
+					t.Error("timeout waiting for app to be up")
+				default:
+					time.Sleep(1 * time.Second)
+				}
+			}
+
+		})
+
 	}, spec.Parallel(), spec.Report(report.Terminal{}))
 
 	when("pack rebase", func() {
