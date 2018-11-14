@@ -239,7 +239,8 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 
 			it("switches the base", func() {
 				// Before
-				txt := copySingleFileFromImage(t, dockerCli, repoName, "base.txt")
+				txt, err := copySingleFileFromImage(dockerCli, repoName, "base.txt")
+				h.AssertNil(t, err)
 				h.AssertEq(t, txt, "old-base\n")
 
 				// Run rebase
@@ -260,7 +261,8 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				ctr, err := dockerCli.ContainerCreate(context.Background(), &container.Config{Image: repoName}, &container.HostConfig{}, nil, "")
 				defer dockerCli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{})
 				for filename, expectedText := range expected {
-					actualText := copySingleFileFromContainer(t, dockerCli, ctr.ID, filename)
+					actualText, err := copySingleFileFromContainer(dockerCli, ctr.ID, filename)
+					h.AssertNil(t, err)
 					h.AssertEq(t, actualText, expectedText)
 				}
 
@@ -388,8 +390,6 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			}
 		})
 
-		it("IS QUICK", func() { repoName = "" })
-
 		it("reuses a layer", func() {
 			err := img.ReuseLayer(layer2SHA)
 			h.AssertNil(t, err)
@@ -397,12 +397,13 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			_, err = img.Save()
 			h.AssertNil(t, err)
 
-			output := h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", "/layer-2.txt"))
+			output, err := copySingleFileFromImage(dockerCli, repoName, "layer-2.txt")
+			h.AssertNil(t, err)
 			h.AssertEq(t, output, "old-layer-2")
 
 			// Confirm layer-1.txt does not exist
-			_, err = h.RunE(exec.Command("docker", "run", "--rm", repoName, "cat", "/layer-1.txt"))
-			h.AssertContains(t, err.Error(), "cat: can't open '/layer-1.txt': No such file or directory")
+			_, err = copySingleFileFromImage(dockerCli, repoName, "layer-1.txt")
+			h.AssertContains(t, err.Error(), "Error: No such container:path:")
 		})
 
 		it("does not download the old image if layers are directly above (performance)", func() {
@@ -412,12 +413,13 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			_, err = img.Save()
 			h.AssertNil(t, err)
 
-			output := h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", "/layer-1.txt"))
+			output, err := copySingleFileFromImage(dockerCli, repoName, "layer-1.txt")
+			h.AssertNil(t, err)
 			h.AssertEq(t, output, "old-layer-1")
 
 			// Confirm layer-2.txt does not exist
-			_, err = h.RunE(exec.Command("docker", "run", "--rm", repoName, "cat", "/layer-2.txt"))
-			h.AssertContains(t, err.Error(), "cat: can't open '/layer-2.txt': No such file or directory")
+			_, err = copySingleFileFromImage(dockerCli, repoName, "layer-2.txt")
+			h.AssertContains(t, err.Error(), "Error: No such container:path:")
 		})
 	})
 
@@ -475,41 +477,26 @@ func createImageOnLocal(t *testing.T, dockerCli *docker.Client, repoName, docker
 	res.Body.Close()
 }
 
-func copySingleFileFromContainer(t *testing.T, dockerCli *docker.Client, ctrID, path string) string {
+func copySingleFileFromContainer(dockerCli *docker.Client, ctrID, path string) (string, error) {
 	r, _, err := dockerCli.CopyFromContainer(context.Background(), ctrID, path)
-	h.AssertNil(t, err)
+	if err != nil {
+		return "", err
+	}
 	defer r.Close()
 	tr := tar.NewReader(r)
 	hdr, err := tr.Next()
-	h.AssertEq(t, hdr.Name, path)
+	if hdr.Name != path {
+		return "", fmt.Errorf("filenames did not match: %s and %s", hdr.Name, path)
+	}
 	b, err := ioutil.ReadAll(tr)
-	h.AssertNil(t, err)
-	return string(b)
+	return string(b), err
 }
 
-func copySingleFileFromImage(t *testing.T, dockerCli *docker.Client, repoName, path string) string {
+func copySingleFileFromImage(dockerCli *docker.Client, repoName, path string) (string, error) {
 	ctr, err := dockerCli.ContainerCreate(context.Background(), &container.Config{Image: repoName}, &container.HostConfig{}, nil, "")
-	h.AssertNil(t, err)
+	if err != nil {
+		return "", err
+	}
 	defer dockerCli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{})
-	return copySingleFileFromContainer(t, dockerCli, ctr.ID, path)
+	return copySingleFileFromContainer(dockerCli, ctr.ID, path)
 }
-
-// PASS | Local (14.63s)
-// PASS |     Local/local (0.00s)
-// PASS |         Local/local/#Name/always_returns_the_original_name (0.00s)
-// PASS |         Local/local/#Label/image_NOT_exists/returns_an_error (0.00s)
-// PASS |         Local/local/#Digest/image_exists_and_has_a_digest/returns_the_image_digest (1.59s)
-// PASS |         Local/local/#Digest/image_exists_but_has_no_digest/returns_an_empty_string (3.44s)
-// PASS |         Local/local/#Label/image_exists/returns_an_empty_string_for_a_missing_label (3.44s)
-// PASS |         Local/local/#Save/image_exists/returns_the_image_digest (3.44s)
-// PASS |         Local/local/#Label/image_exists/returns_the_label_value (3.44s)
-// PASS |         Local/local/#TopLayer/image_exists/returns_the_digest_for_the_top_layer_(useful_for_rebasing) (3.44s)
-// PASS |         Local/local/#SetLabel/image_exists/sets_label_and_saves_label_to_docker_daemon (4.29s)
-// |             local_test.go:175: set label
-// |             local_test.go:179: save label
-// PASS |         Local/local/#AddLayer/appends_a_layer (6.95s)
-// PASS |         Local/local/#ReuseLayer/IS_QUICK (6.95s)
-// PASS |         Local/local/#ReuseLayer/reuses_a_layer (7.02s)
-// PASS |         Local/local/#ReuseLayer/does_not_download_the_old_image_if_layers_are_directly_above_(performance) (7.37s)
-// PASS |         Local/local/#Rebase/image_exists/switches_the_base (14.62s)
-// PASS | github.com/buildpack/pack/image 14.640s
