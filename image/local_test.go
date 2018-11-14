@@ -1,6 +1,7 @@
 package image_test
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"fmt"
@@ -21,8 +22,7 @@ import (
 	"github.com/buildpack/pack/image"
 	h "github.com/buildpack/pack/testhelpers"
 	dockertypes "github.com/docker/docker/api/types"
-	"github.com/moby/moby/api/types/container"
-	"github.com/pkg/errors"
+	"github.com/docker/docker/api/types/container"
 	"github.com/sclevine/spec"
 	"github.com/sclevine/spec/report"
 )
@@ -238,22 +238,8 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 			})
 
 			it("switches the base", func() {
-				start := time.Now()
 				// Before
-				txt := h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", "base.txt"))
-
-				// EC: Reimplement the "cat" above
-				ctr, err := dockerCli.ContainerCreate(ctx, &container.Config{
-					Image: repoName,
-				}, &container.HostConfig{}, nil, "")
-				defer dockerCli.ContainerRemove(ctx, ctr.ID, dockertypes.ContainerRemoveOptions{})
-				r, _, err := dockerCli.CopyFromContainer(ctx, ctr.ID, "base.txt")
-				if err != nil {
-					return errors.Wrap(err, "copy from exporter container")
-				}
-				defer r.Close()
-
-				fmt.Println("DG2:", time.Since(start))
+				txt := copySingleFileFromImage(t, dockerCli, repoName, "base.txt")
 				h.AssertEq(t, txt, "old-base\n")
 
 				// Run rebase
@@ -271,8 +257,10 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 					"myimage.txt":   "text-from-image\n",
 					"myimage2.txt":  "text-from-image\n",
 				}
+				ctr, err := dockerCli.ContainerCreate(context.Background(), &container.Config{Image: repoName}, &container.HostConfig{}, nil, "")
+				defer dockerCli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{})
 				for filename, expectedText := range expected {
-					actualText := h.Run(t, exec.Command("docker", "run", "--rm", repoName, "cat", filename))
+					actualText := copySingleFileFromContainer(t, dockerCli, ctr.ID, filename)
 					h.AssertEq(t, actualText, expectedText)
 				}
 
@@ -281,7 +269,6 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				h.AssertNil(t, err)
 				numLayers := len(inspect.RootFS.Layers)
 				h.AssertEq(t, numLayers, origNumLayers)
-				fmt.Println("DG:", time.Since(start))
 			})
 		})
 	})
@@ -486,6 +473,25 @@ func createImageOnLocal(t *testing.T, dockerCli *docker.Client, repoName, docker
 
 	io.Copy(ioutil.Discard, res.Body)
 	res.Body.Close()
+}
+
+func copySingleFileFromContainer(t *testing.T, dockerCli *docker.Client, ctrID, path string) string {
+	r, _, err := dockerCli.CopyFromContainer(context.Background(), ctrID, path)
+	h.AssertNil(t, err)
+	defer r.Close()
+	tr := tar.NewReader(r)
+	hdr, err := tr.Next()
+	h.AssertEq(t, hdr.Name, path)
+	b, err := ioutil.ReadAll(tr)
+	h.AssertNil(t, err)
+	return string(b)
+}
+
+func copySingleFileFromImage(t *testing.T, dockerCli *docker.Client, repoName, path string) string {
+	ctr, err := dockerCli.ContainerCreate(context.Background(), &container.Config{Image: repoName}, &container.HostConfig{}, nil, "")
+	h.AssertNil(t, err)
+	defer dockerCli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{})
+	return copySingleFileFromContainer(t, dockerCli, ctr.ID, path)
 }
 
 // PASS | Local (14.63s)
