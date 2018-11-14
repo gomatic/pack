@@ -679,6 +679,7 @@ func testBuild(t *testing.T, when spec.G, it spec.S) {
 				it("reuses images from previous layers", func() {
 					t.Log("create image and h.Assert add new layer")
 					h.AssertNil(t, subject.Export(group))
+					defer h.Run(t, exec.Command("docker", "rmi", h.ImageID(t, subject.RepoName)))
 					txt := h.Run(t, exec.Command("docker", "run", "--rm", subject.RepoName, "cat", "/workspace/io.buildpacks.samples.nodejs/mylayer/file.txt"))
 					h.AssertEq(t, string(txt), "content")
 

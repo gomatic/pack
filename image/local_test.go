@@ -49,10 +49,11 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		when("image exists", func() {
 			it.Before(func() {
 				cmd := exec.Command("docker", "build", "-t", repoName, "-")
-				cmd.Stdin = strings.NewReader(`
+				cmd.Stdin = strings.NewReader(fmt.Sprintf(`
 					FROM scratch
+					LABEL repo_name_for_randomisation=%s
 					LABEL mykey=myvalue other=data
-				`)
+				`, repoName))
 				h.Run(t, cmd)
 			})
 
@@ -230,6 +231,8 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 				h.AssertNil(t, err)
 				err = img.Rebase(oldTopLayer, newBaseImg)
 				h.AssertNil(t, err)
+				_, err = img.Save()
+				h.AssertNil(t, err)
 
 				// After
 				expected := map[string]string{
@@ -333,11 +336,13 @@ func testLocal(t *testing.T, when spec.G, it spec.S) {
 		)
 		it.Before(func() {
 			var err error
-			createImageOnLocal(t, repoName, `
+
+			createImageOnLocal(t, repoName, fmt.Sprintf(`
 					FROM busybox
+					LABEL repo_name_for_randomisation=%s
 					RUN echo -n old-layer-1 > layer-1.txt
 					RUN echo -n old-layer-2 > layer-2.txt
-				`)
+				`, repoName))
 
 			layer1SHA = strings.TrimSpace(h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{index .RootFS.Layers 1}}")))
 			layer2SHA = strings.TrimSpace(h.Run(t, exec.Command("docker", "inspect", repoName, "-f", "{{index .RootFS.Layers 2}}")))

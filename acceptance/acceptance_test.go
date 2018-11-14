@@ -186,9 +186,10 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 					t.Fatalf("Expected to see image %s in %s", repo, contents)
 				}
 
-				t.Log("run image:", repoName)
 				h.Run(t, exec.Command("docker", "pull", fmt.Sprintf("%s@%s", repoName, imgSHA)))
+				defer h.Run(t, exec.Command("docker", "rmi", fmt.Sprintf("%s@%s", repoName, imgSHA)))
 				h.Run(t, exec.Command("docker", "run", "--name="+containerName, "--rm=true", "-d", "-e", "PORT=8080", "-p", ":8080", fmt.Sprintf("%s@%s", repoName, imgSHA)))
+				defer h.Run(t, exec.Command("docker", "container", "stop", containerName))
 				launchPort := fetchHostPort(t, containerName)
 
 				time.Sleep(5 * time.Second)
@@ -206,7 +207,7 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 	}, spec.Parallel(), spec.Report(report.Terminal{}))
 
 	when("pack rebase", func() {
-		var repoName, containerName, runBefore, runAfter string
+		var repoName, containerName, runBefore, runAfter, origID string
 		var buildAndSetRunImage func(runImage, contents1, contents2 string)
 		var rootContents1 func() string
 		it.Before(func() {
@@ -235,23 +236,29 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 		})
 		it.After(func() {
 			dockerCli.ContainerKill(context.TODO(), containerName, "SIGKILL")
-			for _, name := range []string{repoName, runBefore, runAfter} {
-				dockerCli.ImageRemove(context.TODO(), name, dockertypes.ImageRemoveOptions{Force: true, PruneChildren: true})
-			}
+			h.Run(t, exec.Command("docker", "rmi", origID))
+			h.Run(t, exec.Command("docker", "rmi", repoName))
+			h.Run(t, exec.Command("docker", "rmi", runBefore))
+			h.Run(t, exec.Command("docker", "rmi", runAfter))
 		})
 
 		when("run on daemon", func() {
-			it("rebases", func() {
+			it.Before(func() {
 				buildAndSetRunImage(runBefore, "contents-before-1", "contents-before-2")
 
 				cmd := exec.Command(pack, "build", repoName, "-p", "testdata/node_app/", "--no-pull")
 				h.Run(t, cmd)
+				origID = h.ImageID(t, repoName)
+			})
+
+			it("rebases", func() {
+				buildAndSetRunImage(runBefore, "contents-before-1", "contents-before-2")
 
 				h.AssertEq(t, rootContents1(), "contents-before-1\n")
 
 				buildAndSetRunImage(runAfter, "contents-after-1", "contents-after-2")
 
-				cmd = exec.Command(pack, "rebase", repoName, "--no-pull")
+				cmd := exec.Command(pack, "rebase", repoName, "--no-pull")
 				h.Run(t, cmd)
 
 				h.AssertEq(t, rootContents1(), "contents-after-1\n")
@@ -263,8 +270,7 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 				repoName = "localhost:" + registryPort + "/" + repoName
 				runBefore = "localhost:" + registryPort + "/" + runBefore
 				runAfter = "localhost:" + registryPort + "/" + runAfter
-			})
-			it("rebases", func() {
+
 				buildAndSetRunImage(runBefore, "contents-before-1", "contents-before-2")
 				h.Run(t, exec.Command("docker", "push", runBefore))
 
@@ -272,11 +278,14 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 				h.Run(t, cmd)
 
 				h.AssertEq(t, rootContents1(), "contents-before-1\n")
+				origID = h.ImageID(t, repoName)
+			})
 
+			it("rebases", func() {
 				buildAndSetRunImage(runAfter, "contents-after-1", "contents-after-2")
 				h.Run(t, exec.Command("docker", "push", runAfter))
 
-				cmd = exec.Command(pack, "rebase", repoName, "--publish")
+				cmd := exec.Command(pack, "rebase", repoName, "--publish")
 				h.Run(t, cmd)
 				h.Run(t, exec.Command("docker", "pull", repoName))
 
@@ -324,6 +333,7 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 			)
 			buildOutput, err := cmd.CombinedOutput()
 			h.AssertNil(t, err)
+			defer h.Run(t, exec.Command("docker", "rmi", h.ImageID(t, repoName)))
 			expectedDetectOutput := "First Mock Buildpack: pass | Second Mock Buildpack: pass | Third Mock Buildpack: pass"
 			if !strings.Contains(string(buildOutput), expectedDetectOutput) {
 				t.Fatalf(`Expected build output to contain detection output "%s", got "%s"`, expectedDetectOutput, buildOutput)
@@ -353,6 +363,7 @@ func testPack(t *testing.T, when spec.G, it spec.S) {
 			)
 			buildOutput, err = cmd.CombinedOutput()
 			h.AssertNil(t, err)
+			defer h.Run(t, exec.Command("docker", "rmi", h.ImageID(t, repoName)))
 			latestInfo := `No version for 'mock.bp.first' buildpack provided, will use 'mock.bp.first@latest'`
 			if !strings.Contains(string(buildOutput), latestInfo) {
 				t.Fatalf(`expected build output to contain "%s", got "%s"`, latestInfo, buildOutput)

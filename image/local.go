@@ -121,25 +121,14 @@ func (l *local) Rebase(baseTopLayer string, newBase Image) error {
 	l.Inspect.RootFS.Layers = newBaseInspect.RootFS.Layers
 	l.layerPaths = make([]string, len(l.Inspect.RootFS.Layers))
 
+
 	// SAVE CURRENT IMAGE TO DISK
-	tmpDir, err := ioutil.TempDir("", "packs.local.rebase.")
-	if err != nil {
-		return errors.Wrap(err, "local rebase create temp dir")
-	}
-	defer os.RemoveAll(tmpDir)
-
-	rc, err := l.Docker.ImageSave(ctx, []string{l.RepoName})
-	if err != nil {
-		return errors.Wrap(err, "local rebase access old image")
-	}
-	defer rc.Close()
-
-	if err := l.FS.Untar(rc, tmpDir); err != nil {
-		return errors.Wrap(err, "local rebase untar old image")
+	if err := l.prevDownload(); err != nil {
+		return err
 	}
 
 	// READ MANIFEST.JSON
-	b, err := ioutil.ReadFile(filepath.Join(tmpDir, "manifest.json"))
+	b, err := ioutil.ReadFile(filepath.Join(l.prevDir, "manifest.json"))
 	if err != nil {
 		return err
 	}
@@ -153,15 +142,11 @@ func (l *local) Rebase(baseTopLayer string, newBase Image) error {
 
 	// ADD EXISTING LAYERS
 	for _, filename := range manifest[0].Layers[(len(manifest[0].Layers) - keepLayers):] {
-		if err := l.AddLayer(filepath.Join(tmpDir, filename)); err != nil {
+		if err := l.AddLayer(filepath.Join(l.prevDir, filename)); err != nil {
 			return err
 		}
 	}
 
-	if _, err = l.Save(); err != nil {
-		return err
-	}
-	l.layerPaths = make([]string, len(l.Inspect.RootFS.Layers))
 	return nil
 }
 
@@ -309,14 +294,7 @@ func (l *local) prevDownload() error {
 	l.prevOnce.Do(func() {
 		ctx := context.Background()
 
-		t, err := name.NewTag(l.RepoName, name.WeakValidation)
-		if err != nil {
-			outerErr = err
-			return
-		}
-		repoName := t.String()
-
-		tarFile, err := l.Docker.ImageSave(ctx, []string{repoName})
+		tarFile, err := l.Docker.ImageSave(ctx, []string{l.RepoName})
 		if err != nil {
 			outerErr = err
 			return
