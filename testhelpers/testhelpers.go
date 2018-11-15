@@ -115,7 +115,7 @@ func proxyDockerHostPort(port string) (string, error) {
 			go func(conn net.Conn) {
 				defer conn.Close()
 				var stderr bytes.Buffer
-				cmd := exec.Command("docker", "run", "--log-driver=none", "-i", "-a", "stdin", "-a", "stdout", "-a", "stderr", "--network=host", "alpine/socat", "-", "TCP:localhost:"+port)
+				cmd := exec.Command("docker", "run", "--rm", "--log-driver=none", "-i", "-a", "stdin", "-a", "stdout", "-a", "stderr", "--network=host", "alpine/socat", "-", "TCP:localhost:"+port)
 				cmd.Stdin = conn
 				cmd.Stdout = conn
 				cmd.Stderr = &stderr
@@ -255,7 +255,7 @@ func HttpGet(t *testing.T, url string) string {
 		AssertNil(t, err)
 		return string(b)
 	} else {
-		return Run(t, exec.Command("docker", "run", "--log-driver=none", "--entrypoint=", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url))
+		return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "--entrypoint=", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url))
 	}
 }
 
@@ -276,18 +276,11 @@ func ReplaceLocalDockerPortWithRemotePort(s string) string {
 	return strings.Replace(s, "localhost:"+runRegistryLocalPort, "localhost:"+runRegistryRemotePort, -1)
 }
 
-func RemoveImage(names ...string) error {
-	var firstError error
-	for _, name := range names {
-		if strings.HasPrefix(name, "localhost:") {
-			name = regexp.MustCompile(`localhost:\d+`).ReplaceAllString(name, "localhost:*")
-		}
-		_, err := RunE(exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' %s)`, name)))
-		if firstError == nil {
-			firstError = err
-		}
-	}
-	return firstError
+func ImageID(t *testing.T, repoName string) string {
+	t.Helper()
+	id, err := RunE(exec.Command("docker", "images", "--format={{.ID}}", repoName))
+	AssertNil(t, err)
+	return strings.TrimSpace(id)
 }
 
 func Run(t *testing.T, cmd *exec.Cmd) string {
@@ -320,4 +313,23 @@ func RunE(cmd *exec.Cmd) (string, error) {
 	}
 
 	return string(output), nil
+}
+
+func contains(slice []string, val string) bool {
+	for _, s := range slice {
+		if s == val {
+			return true
+		}
+	}
+	return false
+}
+
+func trimEmpty(slice []string) []string {
+	out := make([]string, 0, len(slice))
+	for _, v := range slice {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
