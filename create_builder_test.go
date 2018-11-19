@@ -15,7 +15,6 @@ import (
 	"github.com/buildpack/lifecycle"
 	"github.com/golang/mock/gomock"
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-containerregistry/pkg/v1"
 	"github.com/sclevine/spec"
 	"github.com/sclevine/spec/report"
 
@@ -253,31 +252,6 @@ func testCreateBuilder(t *testing.T, when spec.G, it spec.S) {
 			})
 		})
 
-		when("#Create", func() {
-			when("successful", func() {
-				it("logs usage tip", func() {
-					mockBaseImage := mocks.NewMockV1Image(mockController)
-					mockImageStore := mocks.NewMockStore(mockController)
-
-					mockBaseImage.EXPECT().Manifest().Return(&v1.Manifest{}, nil)
-					mockBaseImage.EXPECT().ConfigFile().Return(&v1.ConfigFile{}, nil)
-					mockImageStore.EXPECT().Write(gomock.Any())
-
-					err := factory.Create(pack.BuilderConfig{
-						RepoName:   "myorg/mybuilder",
-						Repo:       mockImageStore,
-						Buildpacks: []pack.Buildpack{},
-						Groups:     []lifecycle.BuildpackGroup{},
-						BaseImage:  mockBaseImage,
-						BuilderDir: "",
-					})
-					h.AssertNil(t, err)
-
-					h.AssertContains(t, buf.String(), "Successfully created builder image: myorg/mybuilder")
-					h.AssertContains(t, buf.String(), `Tip: Run "pack build <image name> --builder <builder image> --path <app source code>" to use this builder`)
-				})
-			})
-		})
 		when("a buildpack location uses no scheme uris", func() {
 			it("supports relative directories as well as archives", func() {
 				mockBaseImage := mocks.NewMockV1Image(mockController)
@@ -465,6 +439,50 @@ buildpacks = [
 					ctx, _ := context.WithTimeout(context.Background(), 2*time.Second)
 					server.Shutdown(ctx)
 				}
+			})
+		})
+
+		when("#Create", func() {
+			when("successful", func() {
+				it.Focus("logs usage tip", func() {
+					mockBaseImage := mocks.NewMockImage(mockController)
+					mockBaseImage.EXPECT().AddLayer(gomock.Any()).Do(func(path string) {
+						h.AssertTarFileContents(t, path, "/buildpacks/order.toml", `
+[[groups]]
+  [[groups.buildpacks]]
+  id="some.bp1"
+`)
+					})
+					mockBaseImage.EXPECT().Save()
+
+					err := factory.Create(pack.BuilderConfig{
+						BaseImage:  mockBaseImage,
+						RepoName:   "myorg/mybuilder",
+						Buildpacks: []pack.Buildpack{},
+						Groups: []lifecycle.BuildpackGroup{{Buildpacks: []*lifecycle.Buildpack{
+							{
+								ID:      "some.bp1",
+								Version: "1.2.3",
+							},
+							{
+								ID:      "some.bp2",
+								Version: "1.2.4",
+							},
+						}},
+							{Buildpacks: []*lifecycle.Buildpack{
+								{
+									ID:      "some.bp1",
+									Version: "1.2.3",
+								},
+							}},
+						},
+						BuilderDir: "",
+					})
+					h.AssertNil(t, err)
+
+					h.AssertContains(t, buf.String(), "Successfully created builder image: myorg/mybuilder")
+					h.AssertContains(t, buf.String(), `Tip: Run "pack build <image name> --builder <builder image> --path <app source code>" to use this builder`)
+				})
 			})
 		})
 	})

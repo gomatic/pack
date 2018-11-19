@@ -26,6 +26,15 @@ func (*FS) CreateTGZFile(tarFile, srcDir, tarDir string, uid, gid int) error {
 	return writeTarArchive(gzw, srcDir, tarDir, uid, gid)
 }
 
+func (*FS) CreateTarFile(tarFile, srcDir, tarDir string, uid, gid int) error {
+	fh, err := os.Create(tarFile)
+	if err != nil {
+		return fmt.Errorf("create file for tar: %s", err)
+	}
+	defer fh.Close()
+	return writeTarArchive(fh, srcDir, tarDir, uid, gid)
+}
+
 func (*FS) CreateTarReader(srcDir, tarDir string, uid, gid int) (io.Reader, chan error) {
 	r, w := io.Pipe()
 	errChan := make(chan error, 1)

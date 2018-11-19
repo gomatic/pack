@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"github.com/buildpack/pack/image"
 	"io"
 	"io/ioutil"
 	"log"
@@ -39,7 +40,7 @@ type BuilderConfig struct {
 	Repo       img.Store
 	Buildpacks []Buildpack
 	Groups     []lifecycle.BuildpackGroup
-	BaseImage  v1.Image
+	BaseImage  image.Image
 	BuilderDir string //original location of builder.toml, used for interpreting relative paths in buildpack URIs
 }
 type Buildpack struct {
@@ -73,16 +74,18 @@ type Task interface {
 }
 
 type BuilderFactory struct {
-	Log    *log.Logger
-	Docker Docker
-	FS     FS
-	Config *config.Config
-	Images Images
+	Log          *log.Logger
+	Docker       Docker
+	FS           FS
+	Config       *config.Config
+	Images       Images
+	ImageFactory image.Factory
 }
 
 //go:generate mockgen -package mocks -destination mocks/fs.go github.com/buildpack/pack FS
 type FS interface {
 	CreateTGZFile(tarFile, srcDir, tarDir string, uid, gid int) error
+	CreateTarFile(tarFile, srcDir, tarDir string, uid, gid int) error
 	CreateTarReader(srcDir, tarDir string, uid, gid int) (io.Reader, chan error)
 	Untar(r io.Reader, dest string) error
 	CreateSingleFileTar(path, txt string) (io.Reader, error)
@@ -111,10 +114,11 @@ func (f *BuilderFactory) BuilderConfigFromFlags(flags CreateBuilderFlags) (Build
 
 	builderConfig := BuilderConfig{RepoName: flags.RepoName}
 	builderConfig.BuilderDir = filepath.Dir(flags.BuilderTomlPath)
-	builderConfig.BaseImage, err = f.Images.ReadImage(baseImage, !flags.Publish)
-	if err != nil {
-		return BuilderConfig{}, fmt.Errorf(`failed to read base image "%s": %s`, baseImage, err)
-	}
+	builderConfig.BaseImage, err = f.ImageFactory.NewLocal(baseImage, flags.NoPull)
+	//builderConfig.BaseImage, err = f.Images.ReadImage(baseImage, !flags.Publish)
+	//if err != nil {
+	//	return BuilderConfig{}, fmt.Errorf(`failed to read base image "%s": %s`, baseImage, err)
+	//}
 	if builderConfig.BaseImage == nil {
 		return BuilderConfig{}, fmt.Errorf(`base image "%s" was not found`, baseImage)
 	}
@@ -153,7 +157,7 @@ func (f *BuilderFactory) resolveBuildpackURI(builderDir string, b struct {
 		return Buildpack{}, err
 	}
 	switch asurl.Scheme {
-	case "", // This is the only way to support relative filepaths
+	case "",    // This is the only way to support relative filepaths
 		"file": // URIs with file:// protocol force the use of absolute paths. Host=localhost may be implied with file:///
 
 		path := asurl.Path
@@ -243,42 +247,51 @@ func (f *BuilderFactory) Create(config BuilderConfig) error {
 	if err != nil {
 		return fmt.Errorf(`failed to create temporary directory: %s`, err)
 	}
-	defer os.RemoveAll(tmpDir) // TODO
+	//defer os.RemoveAll(tmpDir) // TODO
+	fmt.Println("TMP DIR", tmpDir)
 
 	orderTar, err := f.orderLayer(tmpDir, config.Groups)
 	if err != nil {
+		fmt.Println("failed to make order layer")
 		return fmt.Errorf(`failed generate order.toml layer: %s`, err)
 	}
-	builderImage, _, err := img.Append(config.BaseImage, orderTar)
+	fmt.Println("adding order layer")
+	err = config.BaseImage.AddLayer(orderTar)
 	if err != nil {
 		return fmt.Errorf(`failed append order.toml layer to image: %s`, err)
 	}
-	for _, buildpack := range config.Buildpacks {
-		tarFile, err := f.buildpackLayer(tmpDir, buildpack, config.BuilderDir)
-		if err != nil {
-			return fmt.Errorf(`failed generate layer for buildpack "%s": %s`, buildpack.ID, err)
-		}
-		builderImage, _, err = img.Append(builderImage, tarFile)
-		if err != nil {
-			return fmt.Errorf(`failed append buildpack layer to image: %s`, err)
-		}
-	}
-	tarFile, err := f.latestLayer(config.Buildpacks, tmpDir, config.BuilderDir)
-	if err != nil {
-		return fmt.Errorf(`failed generate layer for latest links: %s`, err)
-	}
-	builderImage, _, err = img.Append(builderImage, tarFile)
-	if err != nil {
-		return fmt.Errorf(`failed append latest link layer to image: %s`, err)
-	}
+	//for _, buildpack := range config.Buildpacks {
+	//	tarFile, err := f.buildpackLayer(tmpDir, buildpack, config.BuilderDir)
+	//	if err != nil {
+	//		return fmt.Errorf(`failed generate layer for buildpack "%s": %s`, buildpack.ID, err)
+	//	}
+	//	builderImage, _, err = img.Append(builderImage, tarFile)
+	//	if err != nil {
+	//		return fmt.Errorf(`failed append buildpack layer to image: %s`, err)
+	//	}
+	//}
+	//tarFile, err := f.latestLayer(config.Buildpacks, tmpDir, config.BuilderDir)
+	//if err != nil {
+	//	return fmt.Errorf(`failed generate layer for latest links: %s`, err)
+	//}
+	//builderImage, _, err = img.Append(builderImage, tarFile)
+	//if err != nil {
+	//	return fmt.Errorf(`failed append latest link layer to image: %s`, err)
+	//}
+	//
+	//if err := config.Repo.Write(builderImage); err != nil {
+	//	return err
+	//}
+	//
+	//f.Log.Println("Successfully created builder image:", config.RepoName)
+	//f.Log.Println("")
+	//f.Log.Println(`Tip: Run "pack build <image name> --builder <builder image> --path <app source code>" to use this builder`)
 
-	if err := config.Repo.Write(builderImage); err != nil {
-		return err
+	fmt.Println("saving")
+	_, err = config.BaseImage.Save()
+	if err != nil {
+		return errors.Wrap(err, `save image`)
 	}
-
-	f.Log.Println("Successfully created builder image:", config.RepoName)
-	f.Log.Println("")
-	f.Log.Println(`Tip: Run "pack build <image name> --builder <builder image> --path <app source code>" to use this builder`)
 
 	return nil
 }
@@ -304,7 +317,7 @@ func (f *BuilderFactory) orderLayer(dest string, groups []lifecycle.BuildpackGro
 		return "", err
 	}
 	layerTar = filepath.Join(dest, "order.tar")
-	if err := f.FS.CreateTGZFile(layerTar, buildpackDir, "/buildpacks", 0, 0); err != nil {
+	if err := f.FS.CreateTarFile(layerTar, buildpackDir, "/buildpacks", 0, 0); err != nil {
 		return "", err
 	}
 	return layerTar, nil

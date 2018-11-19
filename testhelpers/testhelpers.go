@@ -1,8 +1,10 @@
 package testhelpers
 
 import (
+	"archive/tar"
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -97,6 +99,32 @@ func AssertDirContainsFileWithContents(t *testing.T, dir string, file string, ex
 	if string(bytes) != expected {
 		t.Fatalf("file %s in dir %s has wrong contents: %s != %s", file, dir, string(bytes), expected)
 	}
+}
+
+
+func AssertTarFileContents(t *testing.T, tarfile, path, expected string) {
+	t.Helper()
+	r, err := os.Open(tarfile)
+	AssertNil(t, err)
+	defer r.Close()
+
+	tr := tar.NewReader(r)
+	for {
+		fmt.Println("getting next")
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		AssertNil(t, err)
+
+		if header.Name == path {
+			buf, err := ioutil.ReadAll(tr)
+			AssertNil(t, err)
+			AssertEq(t, string(buf), expected)
+			return
+		}
+	}
+	t.Fatalf("%s does not exist in %s", path, tarfile)
 }
 
 func proxyDockerHostPort(port string) error {

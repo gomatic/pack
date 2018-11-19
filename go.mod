@@ -1,6 +1,7 @@
 module github.com/buildpack/pack
 
 require (
+	github.com/Azure/azure-sdk-for-go v19.1.0+incompatible
 	github.com/BurntSushi/toml v0.3.1
 	github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5 // indirect
 	github.com/buildpack/lifecycle v0.0.0-20181116214402-fa66d9071434
