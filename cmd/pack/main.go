@@ -7,6 +7,9 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	// "runtime"
+	"io/ioutil"
+	"runtime/pprof"
 
 	"github.com/buildpack/pack"
 	"github.com/buildpack/pack/config"
@@ -19,6 +22,11 @@ import (
 var Version = "UNKNOWN"
 
 func main() {
+	if err := pprof.StartCPUProfile(ioutil.Discard); err != nil {
+		log.Fatal("could not start CPU profile: ", err)
+	}
+	defer pprof.StopCPUProfile()
+
 	rootCmd := &cobra.Command{Use: "pack"}
 	for _, f := range [](func() *cobra.Command){
 		buildCommand,
