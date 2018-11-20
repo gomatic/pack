@@ -10,10 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buildpack/pack/fs"
 	"github.com/sclevine/spec"
 	"github.com/sclevine/spec/report"
-
-	"github.com/buildpack/pack/fs"
 )
 
 func TestFS(t *testing.T) {
@@ -55,10 +54,31 @@ func testFS(t *testing.T, when spec.G, it spec.S) {
 		gzr, err := gzip.NewReader(file)
 		tr := tar.NewReader(gzr)
 
-		t.Log("handles regular files")
+		t.Log("handles directories")
 		header, err := tr.Next()
 		if err != nil {
 			t.Fatalf("Failed to get next file: %s", err)
+		}
+		if header.Typeflag != tar.TypeDir {
+			t.Fatalf(`expected directory with typeflag tar.TypeDir got %v`, header.Typeflag)
+		}
+		if header.Name != "/dir-in-archive/" {
+			t.Fatalf(`expected directory with name /dir-in-archive/, got %s`, header.Name)
+		}
+		if header.Uid != 1234 {
+			t.Fatalf(`expected directory to be owned by 1234 was %d`, header.Uid)
+		}
+		if header.Gid != 2345 {
+			t.Fatalf(`expected directory to be group 2345 was %d`, header.Gid)
+		}
+
+		t.Log("handles regular files")
+		header, err = tr.Next()
+		if err != nil {
+			t.Fatalf("Failed to get next file: %s", err)
+		}
+		if header.Typeflag != tar.TypeReg {
+			t.Fatalf(`expected directory with typeflag tar.TypeReg got %v`, header.Typeflag)
 		}
 		if header.Name != "/dir-in-archive/some-file.txt" {
 			t.Fatalf(`expected file with name /dir-in-archive/some-file.txt, got %s`, header.Name)
@@ -75,10 +95,22 @@ func testFS(t *testing.T, when spec.G, it spec.S) {
 			t.Fatalf(`expected some-file.txt to be group 2345 was %d`, header.Gid)
 		}
 
+		t.Log("handles sub-directories")
+		header, err = tr.Next()
+		if err != nil {
+			t.Fatalf("Failed to get next file: %s", err)
+		}
+		if header.Name != "/dir-in-archive/sub-dir/" {
+			t.Fatalf(`expected directory with name /dir-in-archive/sub-dir/, got %s`, header.Name)
+		}
+
 		t.Log("handles symlinks")
 		header, err = tr.Next()
 		if err != nil {
 			t.Fatalf("Failed to get next file: %s", err)
+		}
+		if header.Typeflag != tar.TypeSymlink {
+			t.Fatalf(`expected directory with typeflag tar.TypeSymlink got %v`, header.Typeflag)
 		}
 		if header.Name != "/dir-in-archive/sub-dir/link-file" {
 			t.Fatalf(`expected file with name /dir-in-archive/sub-dir/link-file, got %s`, header.Name)
@@ -89,7 +121,6 @@ func testFS(t *testing.T, when spec.G, it spec.S) {
 		if header.Gid != 2345 {
 			t.Fatalf(`expected link-file to be group 2345 was %d`, header.Gid)
 		}
-
 		if header.Linkname != "../some-file.txt" {
 			t.Fatalf(`expected to link-file to have atrget "../some-file.txt" got %s`, header.Linkname)
 		}
