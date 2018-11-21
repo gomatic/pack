@@ -1,8 +1,11 @@
 package testhelpers
 
 import (
+	"archive/tar"
 	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -17,8 +20,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buildpack/pack/docker"
+	"github.com/buildpack/pack/fs"
+	dockertypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/go-connections/nat"
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/uuid"
+	"github.com/pkg/errors"
 )
 
 func RandString(n int) string {
@@ -69,6 +78,16 @@ func AssertContains(t *testing.T, actual, expected string) {
 	}
 }
 
+func AssertSliceContains(t *testing.T, slice []string, value string) {
+	t.Helper()
+	for _, s := range slice {
+		if value == s {
+			return
+		}
+	}
+	t.Fatalf("Expected: '%s' inside '%s'", value, slice)
+}
+
 func AssertNil(t *testing.T, actual interface{}) {
 	t.Helper()
 	if actual != nil {
@@ -100,7 +119,19 @@ func AssertDirContainsFileWithContents(t *testing.T, dir string, file string, ex
 	}
 }
 
-func proxyDockerHostPort(port string) error {
+var dockerCliVal *docker.Client
+var dockerCliOnce sync.Once
+var dockerCliErr error
+
+func dockerCli(t *testing.T) *docker.Client {
+	dockerCliOnce.Do(func() {
+		dockerCliVal, dockerCliErr = docker.New()
+	})
+	AssertNil(t, dockerCliErr)
+	return dockerCliVal
+}
+
+func proxyDockerHostPort(dockerCli *docker.Client, port string) error {
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		return err
@@ -116,13 +147,62 @@ func proxyDockerHostPort(port string) error {
 			go func(conn net.Conn) {
 				defer conn.Close()
 				var stderr bytes.Buffer
-				cmd := exec.Command("docker", "run", "--rm", "--log-driver=none", "-i", "-a", "stdin", "-a", "stdout", "-a", "stderr", "--network=host", "alpine/socat", "-", "TCP:localhost:"+port)
-				cmd.Stdin = conn
-				cmd.Stdout = conn
-				cmd.Stderr = &stderr
-				if err := cmd.Run(); err != nil {
-					log.Println(stderr.String())
-					log.Println(err)
+
+				ctx := context.Background()
+				err := dockerCli.PullImage("alpine/socat")
+				if err != nil {
+					fmt.Println("ERR: proxyDockerHostPort: PULL:", err)
+					return
+				}
+				ctr, err := dockerCli.ContainerCreate(ctx, &container.Config{
+					Image:        "alpine/socat",
+					Cmd:          []string{"-", "TCP:localhost:" + port},
+					OpenStdin:    true,
+					StdinOnce:    true,
+					AttachStdin:  true,
+					AttachStdout: true,
+					AttachStderr: true,
+				}, &container.HostConfig{
+					AutoRemove:  true,
+					NetworkMode: "host",
+				}, nil, "")
+				if err != nil {
+					fmt.Println("ERR: proxyDockerHostPort: CREATE:", err)
+					return
+				}
+
+				res, err := dockerCli.ContainerAttach(ctx, ctr.ID, dockertypes.ContainerAttachOptions{
+					Stream: true,
+					Stdin:  true,
+					Stdout: true,
+					Stderr: true,
+					Logs:   true,
+				})
+				if err != nil {
+					fmt.Println("ERR: proxyDockerHostPort: ATTACH:", err)
+					return
+				}
+				defer res.Close()
+
+				bodyChan, errChan := dockerCli.ContainerWait(ctx, ctr.ID, container.WaitConditionNextExit)
+				dockerCli.ContainerStart(ctx, ctr.ID, dockertypes.ContainerStartOptions{})
+				if err != nil {
+					fmt.Println("ERR: proxyDockerHostPort: START:", err)
+					return
+				}
+
+				go func() { stdcopy.StdCopy(conn, &stderr, res.Reader) }()
+				go func() { io.Copy(res.Conn, conn) }()
+
+				select {
+				case body := <-bodyChan:
+					if body.StatusCode != 0 {
+						fmt.Println("ERR: proxyDockerHostPort: failed with status code:", body.StatusCode)
+						fmt.Println("ERR: proxyDockerHostPort: STDERR:", stderr.String())
+					}
+				case err := <-errChan:
+					fmt.Println("ERR: proxyDockerHostPort:", err)
+					fmt.Println("ERR: proxyDockerHostPort: STDERR:", stderr.String())
 				}
 			}(conn)
 		}
@@ -138,27 +218,40 @@ func RunRegistry(t *testing.T, seedRegistry bool) (localPort string) {
 	t.Helper()
 	runRegistryOnce.Do(func() {
 		runRegistryName = "test-registry-" + RandString(10)
-		Run(t, exec.Command("docker", "run", "--log-driver=none", "-d", "--rm", "-p", ":5000", "--name", runRegistryName, "registry:2"))
-		port := Run(t, exec.Command("docker", "inspect", runRegistryName, "-f", `{{index (index (index .NetworkSettings.Ports "5000/tcp") 0) "HostPort"}}`))
-		runRegistryPort = strings.TrimSpace(string(port))
 
-		Eventually(t, func() bool {
-			_, err := HttpGetE(fmt.Sprintf("http://localhost:%s/v2/", runRegistryPort))
-			return err == nil
-		}, 10*time.Millisecond, 2*time.Second)
+		AssertNil(t, dockerCli(t).PullImage("registry:2"))
+		ctx := context.Background()
+		ctr, err := dockerCli(t).ContainerCreate(ctx, &container.Config{
+			Image: "registry:2",
+		}, &container.HostConfig{
+			AutoRemove: true,
+			PortBindings: nat.PortMap{
+				"5000/tcp": []nat.PortBinding{{}},
+			},
+		}, nil, runRegistryName)
+		AssertNil(t, err)
+		defer dockerCli(t).ContainerRemove(ctx, ctr.ID, dockertypes.ContainerRemoveOptions{})
+		err = dockerCli(t).ContainerStart(ctx, ctr.ID, dockertypes.ContainerStartOptions{})
+		AssertNil(t, err)
+
+		inspect, err := dockerCli(t).ContainerInspect(context.TODO(), ctr.ID)
+		AssertNil(t, err)
+		runRegistryPort = inspect.NetworkSettings.Ports["5000/tcp"][0].HostPort
 
 		if os.Getenv("DOCKER_HOST") != "" {
-			err := proxyDockerHostPort(runRegistryPort)
+			err := proxyDockerHostPort(dockerCli(t), runRegistryPort)
 			AssertNil(t, err)
 		}
+
+		Eventually(t, func() bool {
+			txt, err := HttpGetE(dockerCli(t), fmt.Sprintf("http://localhost:%s/v2/", runRegistryPort))
+			return err == nil && txt != ""
+		}, 10*time.Millisecond, 2*time.Second)
+
 		if seedRegistry {
 			t.Log("seed registry")
 			for _, f := range []func(*testing.T, string) string{DefaultBuildImage, DefaultRunImage, DefaultBuilderImage} {
-				Run(t, exec.Command(
-					"docker",
-					"push",
-					f(t, runRegistryPort),
-				))
+				AssertNil(t, pushImage(dockerCli(t), f(t, runRegistryPort)))
 			}
 		}
 	})
@@ -166,6 +259,8 @@ func RunRegistry(t *testing.T, seedRegistry bool) (localPort string) {
 }
 
 func Eventually(t *testing.T, test func() bool, every time.Duration, timeout time.Duration) {
+	t.Helper()
+
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	timer := time.NewTimer(timeout)
@@ -200,8 +295,8 @@ func StopRegistry(t *testing.T) {
 	t.Log("stop registry")
 	t.Helper()
 	if runRegistryName != "" {
-		Run(t, exec.Command("docker", "kill", runRegistryName))
-		RunE(exec.Command("bash", "-c", fmt.Sprintf(`docker rmi -f $(docker images --format='{{.ID}}' 'localhost:%s/*')`, runRegistryPort)))
+		dockerCli(t).ContainerKill(context.Background(), runRegistryName, "SIGKILL")
+		dockerCli(t).ContainerRemove(context.TODO(), runRegistryName, dockertypes.ContainerRemoveOptions{Force: true})
 	}
 }
 
@@ -212,10 +307,10 @@ func DefaultBuildImage(t *testing.T, registryPort string) string {
 	tag := packTag()
 	getBuildImageOnce.Do(func() {
 		if tag == "latest" {
-			Run(t, exec.Command("docker", "pull", fmt.Sprintf("packs/build:%s", tag)))
+			AssertNil(t, dockerCli(t).PullImage(fmt.Sprintf("packs/build:%s", tag)))
 		}
-		Run(t, exec.Command(
-			"docker", "tag",
+		AssertNil(t, dockerCli(t).ImageTag(
+			context.Background(),
 			fmt.Sprintf("packs/build:%s", tag),
 			fmt.Sprintf("localhost:%s/packs/build:%s", registryPort, tag),
 		))
@@ -230,9 +325,13 @@ func DefaultRunImage(t *testing.T, registryPort string) string {
 	tag := packTag()
 	getRunImageOnce.Do(func() {
 		if tag == "latest" {
-			Run(t, exec.Command("docker", "pull", fmt.Sprintf("packs/run:%s", tag)))
+			AssertNil(t, dockerCli(t).PullImage(fmt.Sprintf("packs/run:%s", tag)))
 		}
-		Run(t, exec.Command("docker", "tag", fmt.Sprintf("packs/run:%s", tag), fmt.Sprintf("localhost:%s/packs/run:%s", registryPort, tag)))
+		AssertNil(t, dockerCli(t).ImageTag(
+			context.Background(),
+			fmt.Sprintf("packs/run:%s", tag),
+			fmt.Sprintf("localhost:%s/packs/run:%s", registryPort, tag),
+		))
 	})
 	return fmt.Sprintf("localhost:%s/packs/run:%s", registryPort, tag)
 }
@@ -244,11 +343,106 @@ func DefaultBuilderImage(t *testing.T, registryPort string) string {
 	tag := packTag()
 	getBuilderImageOnce.Do(func() {
 		if tag == "latest" {
-			Run(t, exec.Command("docker", "pull", fmt.Sprintf("packs/samples:%s", tag)))
+			AssertNil(t, dockerCli(t).PullImage(fmt.Sprintf("packs/samples:%s", tag)))
 		}
-		Run(t, exec.Command("docker", "tag", fmt.Sprintf("packs/samples:%s", tag), fmt.Sprintf("localhost:%s/packs/samples:%s", registryPort, tag)))
+		AssertNil(t, dockerCli(t).ImageTag(
+			context.Background(),
+			fmt.Sprintf("packs/samples:%s", tag),
+			fmt.Sprintf("localhost:%s/packs/samples:%s", registryPort, tag),
+		))
 	})
 	return fmt.Sprintf("localhost:%s/packs/samples:%s", registryPort, tag)
+}
+
+func CreateImageOnLocal(t *testing.T, dockerCli *docker.Client, repoName, dockerFile string) {
+	ctx := context.Background()
+
+	buildContext, err := (&fs.FS{}).CreateSingleFileTar("Dockerfile", dockerFile)
+	AssertNil(t, err)
+
+	res, err := dockerCli.ImageBuild(ctx, buildContext, dockertypes.ImageBuildOptions{
+		Tags:           []string{repoName},
+		SuppressOutput: true,
+		Remove:         true,
+		ForceRemove:    true,
+	})
+	AssertNil(t, err)
+
+	io.Copy(ioutil.Discard, res.Body)
+	res.Body.Close()
+}
+
+func CreateImageOnRemote(t *testing.T, dockerCli *docker.Client, repoName, dockerFile string) string {
+	t.Helper()
+	defer DockerRmi(dockerCli, repoName)
+
+	CreateImageOnLocal(t, dockerCli, repoName+":latest", dockerFile)
+
+	var topLayer string
+	inspect, _, err := dockerCli.ImageInspectWithRaw(context.TODO(), repoName+":latest")
+	AssertNil(t, err)
+	if len(inspect.RootFS.Layers) > 0 {
+		topLayer = inspect.RootFS.Layers[len(inspect.RootFS.Layers)-1]
+	} else {
+		topLayer = "N/A"
+	}
+
+	AssertNil(t, pushImage(dockerCli, repoName))
+
+	return topLayer
+}
+
+func DockerRmi(dockerCli *docker.Client, repoNames ...string) error {
+	var err error
+	ctx := context.Background()
+	for _, name := range repoNames {
+		_, e := dockerCli.ImageRemove(ctx, name, dockertypes.ImageRemoveOptions{Force: true, PruneChildren: true})
+		if e != nil && err == nil {
+			err = e
+		}
+	}
+	return err
+}
+
+func CopySingleFileFromContainer(dockerCli *docker.Client, ctrID, path string) (string, error) {
+	r, _, err := dockerCli.CopyFromContainer(context.Background(), ctrID, path)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+	tr := tar.NewReader(r)
+	hdr, err := tr.Next()
+	if hdr.Name != path && hdr.Name != filepath.Base(path) {
+		return "", fmt.Errorf("filenames did not match: %s and %s (%s)", hdr.Name, path, filepath.Base(path))
+	}
+	b, err := ioutil.ReadAll(tr)
+	return string(b), err
+}
+
+func CopySingleFileFromImage(dockerCli *docker.Client, repoName, path string) (string, error) {
+	ctr, err := dockerCli.ContainerCreate(context.Background(),
+		&container.Config{
+			Image: repoName,
+		}, &container.HostConfig{
+			AutoRemove: true,
+		}, nil, "",
+	)
+	if err != nil {
+		return "", err
+	}
+	defer dockerCli.ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{})
+	return CopySingleFileFromContainer(dockerCli, ctr.ID, path)
+}
+
+func pushImage(dockerCli *docker.Client, ref string) error {
+	rc, err := dockerCli.ImagePush(context.Background(), ref, dockertypes.ImagePushOptions{RegistryAuth: "{}"})
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(ioutil.Discard, rc); err != nil {
+		return err
+	}
+	return rc.Close()
 }
 
 func packTag() string {
@@ -261,12 +455,20 @@ func packTag() string {
 
 func HttpGet(t *testing.T, url string) string {
 	t.Helper()
-	txt, err := HttpGetE(url)
+	txt, err := HttpGetE(dockerCli(t), url)
 	AssertNil(t, err)
 	return txt
 }
 
-func HttpGetE(url string) (string, error) {
+var pullPacksSamplesOnce sync.Once
+
+func pullPacksSamples(d *docker.Client) {
+	pullPacksSamplesOnce.Do(func() {
+		d.PullImage("packs/samples")
+	})
+}
+
+func HttpGetE(dockerCli *docker.Client, url string) (string, error) {
 	if os.Getenv("DOCKER_HOST") == "" {
 		resp, err := http.Get(url)
 		if err != nil {
@@ -282,28 +484,81 @@ func HttpGetE(url string) (string, error) {
 		}
 		return string(b), nil
 	} else {
-		return RunE(exec.Command("docker", "run", "--rm", "--log-driver=none", "--entrypoint=", "--network=host", "packs/samples", "wget", "-q", "-O", "-", url))
+		var stderr bytes.Buffer
+		ctx := context.Background()
+		pullPacksSamples(dockerCli)
+		ctr, err := dockerCli.ContainerCreate(ctx, &container.Config{
+			Image:        "packs/samples",
+			Cmd:          []string{"wget", "-q", "-O", "-", url},
+			Entrypoint:   nil,
+			AttachStdout: true,
+			AttachStderr: true,
+		}, &container.HostConfig{
+			AutoRemove:  true,
+			NetworkMode: "host",
+		}, nil, "")
+		if err != nil {
+			return "", err
+		}
+
+		var buf bytes.Buffer
+		err = dockerCli.RunContainer(ctx, ctr.ID, &buf, &stderr)
+		if err != nil {
+			return "", fmt.Errorf("Expected nil: %s", errors.Wrap(err, buf.String()))
+		}
+		if txt := strings.TrimSpace(stderr.String()); txt != "" {
+			return "", fmt.Errorf("unexpected stderr: %s", txt)
+		}
+
+		return buf.String(), nil
 	}
 }
 
 func CopyWorkspaceToDocker(t *testing.T, srcPath, destVolume string) {
 	t.Helper()
-	ctrName := uuid.New().String()
-	defer exec.Command("docker", "rm", ctrName).Run()
-	Run(t, exec.Command("docker", "create", "--name", ctrName, "-v", destVolume+":/workspace", "packs/samples", "true"))
-	Run(t, exec.Command("docker", "cp", srcPath+"/.", ctrName+":/workspace/"))
+
+	ctx := context.Background()
+	pullPacksSamples(dockerCli(t))
+	ctr, err := dockerCli(t).ContainerCreate(ctx, &container.Config{
+		Image: "packs/samples",
+		Cmd:   []string{"true"},
+	}, &container.HostConfig{
+		AutoRemove: true,
+		Binds:      []string{destVolume + ":/workspace"},
+	}, nil, "")
+	AssertNil(t, err)
+	defer dockerCli(t).ContainerRemove(ctx, ctr.ID, dockertypes.ContainerRemoveOptions{})
+
+	tr, errChan := (&fs.FS{}).CreateTarReader(srcPath, "/workspace", 1000, 1000)
+	err = dockerCli(t).CopyToContainer(ctx, ctr.ID, "/", tr, dockertypes.CopyToContainerOptions{})
+	AssertNil(t, err)
+	AssertNil(t, <-errChan)
 }
 
 func ReadFromDocker(t *testing.T, volume, path string) string {
 	t.Helper()
-	return Run(t, exec.Command("docker", "run", "--rm", "--log-driver=none", "-v", volume+":/workspace", "packs/samples", "cat", path))
+	pullPacksSamples(dockerCli(t))
+	ctr, err := dockerCli(t).ContainerCreate(
+		context.Background(),
+		&container.Config{Image: "packs/samples"},
+		&container.HostConfig{
+			AutoRemove: true,
+			Binds:      []string{volume + ":/workspace"},
+		},
+		nil, "",
+	)
+	AssertNil(t, err)
+	defer dockerCli(t).ContainerRemove(context.Background(), ctr.ID, dockertypes.ContainerRemoveOptions{})
+	txt, err := CopySingleFileFromContainer(dockerCli(t), ctr.ID, path)
+	AssertNil(t, err)
+	return txt
 }
 
 func ImageID(t *testing.T, repoName string) string {
 	t.Helper()
-	id, err := RunE(exec.Command("docker", "images", "--format={{.ID}}", repoName))
+	inspect, _, err := dockerCli(t).ImageInspectWithRaw(context.Background(), repoName)
 	AssertNil(t, err)
-	return strings.TrimSpace(id)
+	return inspect.ID
 }
 
 func Run(t *testing.T, cmd *exec.Cmd) string {
@@ -315,9 +570,14 @@ func Run(t *testing.T, cmd *exec.Cmd) string {
 
 func CleanDefaultImages(t *testing.T, registryPort string) {
 	t.Helper()
-	Run(t, exec.Command("docker", "rmi", DefaultRunImage(t, registryPort)))
-	Run(t, exec.Command("docker", "rmi", DefaultBuildImage(t, registryPort)))
-	Run(t, exec.Command("docker", "rmi", DefaultBuilderImage(t, registryPort)))
+	AssertNil(t,
+		DockerRmi(
+			dockerCli(t),
+			DefaultRunImage(t, registryPort),
+			DefaultBuildImage(t, registryPort),
+			DefaultBuilderImage(t, registryPort),
+		),
+	)
 }
 
 func RunE(cmd *exec.Cmd) (string, error) {
